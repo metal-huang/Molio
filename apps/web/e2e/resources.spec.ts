@@ -27,6 +27,9 @@ test.describe('Resources page', () => {
     await clickNav(page, 'resources');
 
     await expect(page.locator('.resources-shell')).toBeVisible();
+    // 目录是异步拉取（daemon → cloud）：先等首卡落地再计数，
+    // 否则 shell 渲染与 fetch 落定之间的竞态会数到 0（Windows 本地冷启动必现）
+    await expect(cards(page).first()).toBeVisible({ timeout: 15_000 });
     const total = await cards(page).count();
     expect(total).toBeGreaterThan(0);
 
@@ -70,9 +73,39 @@ test.describe('Resources page', () => {
     await gotoHome(page);
     await page.goto('/resources/does-not-exist');
 
-    await expect(page.locator('.resources-shell')).toBeVisible();
+    // 直接整页加载详情路由：vite dev 冷转换可超默认 5s，放宽等待
+    await expect(page.locator('.resources-shell')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.resources-tip-box')).toBeVisible();
     await expect(page.locator('[data-testid="resources-back"]')).toBeVisible();
+  });
+
+  /**
+   * 首载 loading 态回归（2026-09 资源页首开白屏 15s）：
+   * 目录在途时渲染骨架屏占位卡片，而非与「暂无资源」同形的空白网格；
+   * 数据落定（空目录）后骨架屏消失、显示空态文案。
+   */
+  test('shows skeleton while catalog loads, then resolves', async ({ page }) => {
+    await page.route('**/api/market/listings', async (route) => {
+      await new Promise((r) => setTimeout(r, 1_000)); // 模拟慢云端
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ listings: [], stale: false }),
+      });
+    });
+
+    await gotoHome(page);
+    await clickNav(page, 'resources');
+
+    // 在途：骨架屏可见，且不误显空态
+    await expect(page.locator('[data-testid="resources-skeleton-card"]').first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.locator('.resources-empty')).not.toBeVisible();
+
+    // 落定：骨架屏消失，空目录显示空态文案
+    await expect(page.locator('.resources-empty')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-testid="resources-skeleton-card"]')).toHaveCount(0);
   });
 });
 
@@ -112,7 +145,9 @@ test.describe('Pay base availability', () => {
     );
 
     await page.goto('/resources/pay-regression');
-    await expect(page.locator('.resources-detail-head h1')).toHaveText('支付回归用条目');
+    await expect(page.locator('.resources-detail-head h1')).toHaveText('支付回归用条目', {
+      timeout: 15_000,
+    });
 
     // 按钮文案含「微信支付 ¥1」（未登录带「登录后」前缀，登录与否都命中）
     await expect(page.locator('[data-testid="resource-buy-pay-regression"]')).toContainText(
@@ -184,7 +219,10 @@ test.describe('Resources login gate', () => {
     await expect(page.locator('[data-testid="account-logged-email"]')).toHaveText(email, {
       timeout: 10_000,
     });
-    await page.locator('[data-testid="account-modal-close"]').click();
+    // 账号模块页面化：登录成功 → 弹窗自动收起并导航 /me；回资源页断言按钮文案
+    await expect(page).toHaveURL(/\/me$/);
+    await clickNav(page, 'resources');
+    await expect(page.locator('.resources-shell')).toBeVisible();
 
     // 登录后文案回归正常（未登录前缀消失）。不点击——点击会向真实支付后端下单。
     const firstCard = cards(page).first();
