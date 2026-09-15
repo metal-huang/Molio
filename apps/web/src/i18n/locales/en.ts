@@ -465,8 +465,16 @@ const en: Record<string, string> = {
   'graph.selectVault': 'Select vault',
   'graph.empty': 'No Markdown files in this vault',
   'graph.emptyHint': 'Write Markdown in this vault and link files with [[links]] — the graph appears automatically',
+  // Scoped empty states (full-graph empty state is above)
+  'graph.emptyFile': 'This note has no links yet',
+  'graph.emptyFileHint': 'Link it to other notes with [[wikilinks]] — the graph appears automatically',
+  'graph.emptyOutOfGraph': 'This file is not part of the graph',
+  'graph.emptyOutOfGraphHint': 'The graph only includes Markdown notes other than index / log',
+  'graph.emptyDir': 'No Markdown notes in this folder',
+  'graph.emptyDirHint': 'Add a Markdown note to this folder — the graph appears automatically',
   'graph.searchPlaceholder': 'Search nodes…',
   'graph.searchNoResult': 'No matching nodes',
+  'graph.scopeBack': 'Back to full graph',
 
   // ── FileChatPanel ──
   'fileChat.running': 'Running…',
@@ -527,6 +535,7 @@ const en: Record<string, string> = {
   'kb.statsReadTimeSuffix': 'min',
   'kb.askAboutFile': 'Ask AI',
   'kb.askSelection': 'Ask about this',
+  'kb.ctxLocalGraph': 'View local graph',
   'kb.cannotOpen': 'Cannot open file',
   'kb.loadFailed': 'Load failed',
   'kb.fileNotFound': 'This file may have been deleted, renamed, or never created (possibly an AI-generated broken reference).',

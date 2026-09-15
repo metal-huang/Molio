@@ -3,9 +3,9 @@
  * Now with: workspace tab system + right-click context menu + inline rename.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import type { TreeNode, Vault } from '@molio/contracts';
+import type { TreeNode, Vault, GraphScope } from '@molio/contracts';
 import { useKnowledge } from '../../hooks/useKnowledge';
 import { useKbTabs, MAX_TABS, type WorkspaceTab } from '../../hooks/useKbTabs';
 import { vaultStore } from '../../stores/vaultStore';
@@ -859,6 +859,16 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
     tabs.removeWhere(t => t.vaultId === kb.activeVault?.id && t.id.startsWith(prefix));
   }, [kb, tabs, showToast]);
 
+  // 图谱/发布/分屏状态（供 getContextMenuItems / 下方挂载与 reset effect 消费）。
+  // graphTabScope 是更低处的 KBP useState；因 setGraphTabScope 为稳定 setter 且
+  // getContextMenuItems 的 deps 仅含其闭包依赖，onClick 可安全引用——与声明先后无关。
+  const publishTabOpen = tabs.tabs.some((tb) => tb.id === PUBLISH_TAB_ID);
+  const publishActive = tabs.activeTabId === PUBLISH_TAB_ID;
+  const graphTabOpen = tabs.tabs.some((tb) => tb.id === GRAPH_TAB_ID);
+  const graphActive = tabs.activeTabId === GRAPH_TAB_ID;
+  const split = useSplitView(kb.activeVault?.id ?? null);
+  const fileMain = !publishActive && !graphActive;
+
   const getContextMenuItems = useCallback((): MenuItem[] => {
     if (!ctxMenu) return [];
     const { node } = ctxMenu;
@@ -891,6 +901,14 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
         testid: 'kb-ctx-open-in-new-tab',
         onClick: () => handleOpenInNewTab(node.path),
       });
+      items.push({
+        label: t('kb.ctxLocalGraph'),
+        testid: 'kb-ctx-local-graph',
+        onClick: () => {
+          setGraphTabScope({ type: 'file', path: node.path });
+          openGraphTab();
+        },
+      });
       items.push({ divider: true });
       items.push({
         label: t('kb.askAboutFile'),
@@ -911,6 +929,14 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
       items.push({
         label: '新建子文件夹',
         onClick: () => handleNewFolder(node.path),
+      });
+      items.push({
+        label: t('kb.ctxLocalGraph'),
+        testid: 'kb-ctx-local-graph',
+        onClick: () => {
+          setGraphTabScope({ type: 'dir', path: node.path });
+          openGraphTab();
+        },
       });
       items.push({ divider: true });
     }
@@ -985,7 +1011,7 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
     }
 
     return items;
-  }, [ctxMenu, kb, showToast, handleNewFile, handleNewFolder, handleSelectFile, handleOpenInNewTab, handleDeleteFile, handleDeleteFolder]);
+  }, [ctxMenu, kb, showToast, handleNewFile, handleNewFolder, handleSelectFile, handleOpenInNewTab, handleDeleteFile, handleDeleteFolder, openGraphTab]);
 
   // ─── Inline rename ───
 
@@ -1183,24 +1209,31 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
 
   // 发布 tab（页内 keep-alive）：tab 存在期间 PublishForm 常驻挂载，
   // 非激活仅 CSS 隐藏 + inert，切走再切回不丢已填内容。
-  const publishTabOpen = tabs.tabs.some((tb) => tb.id === PUBLISH_TAB_ID);
-  const publishActive = tabs.activeTabId === PUBLISH_TAB_ID;
   const publishTabData = (tabs.tabs.find((tb) => tb.id === PUBLISH_TAB_ID)?.data ?? undefined) as PublishFormData | undefined;
 
-  // 图谱标签页 keep-alive：标签存在期间 GraphPage 常驻挂载，非激活仅 CSS 隐藏 + inert
-  // （与 publish 同款），切走再切回不丢图谱状态；隐藏时通过 active 暂停引擎省 CPU。
-  const graphTabOpen = tabs.tabs.some((tb) => tb.id === GRAPH_TAB_ID);
-  const graphActive = tabs.activeTabId === GRAPH_TAB_ID;
-
   // ── 单库分屏：主格由标签栏驱动；副格由 splitViewStore 驱动 ──
-  const split = useSplitView(kb.activeVault?.id ?? null);
+  // split / publishActive / graphActive / fileMain 声明已上移到 getContextMenuItems 之前。
+  // 此处仅保留后续消费。
   const companionFile = useCompanionFile(
     kb.activeVault?.id ?? null,
     split?.companion?.type === 'file' ? split.companion.filePath : null,
   );
-  const fileMain = !publishActive && !graphActive;
   const companionShown = !!(split?.companion && fileMain);
   const [showSplitFilePicker, setShowSplitFilePicker] = useState(false);
+
+  // 副视图图谱（对照）简化为纯 file-scope：始终跟随主格文档的 1 跳邻域。
+  // 用 useMemo 强制稳定身份——否则 JSX 内联对象每渲染新身份会使 GraphPage fetch 无限重取。
+  const companionScope = useMemo<GraphScope | null>(
+    () => (kb.selectedFile ? { type: 'file', path: kb.selectedFile } : null),
+    [kb.selectedFile],
+  );
+
+  // 主格图谱 tab（局部知识图谱）scope：null=全量图；非空=file/dir 局部图（树右键入口）。
+  const [graphTabScope, setGraphTabScope] = useState<GraphScope | null>(null);
+
+  // 关 tab / 切 vault 复位 scope（目录路径在新 vault 无意义、避免 stale）。
+  useEffect(() => { if (!graphTabOpen) setGraphTabScope(null); }, [graphTabOpen]);
+  useEffect(() => setGraphTabScope(null), [kb.activeVault?.id]);
 
   /** 右键标签 → 分屏预设：主格切到该标签，副格按 mode 设定。幂等，永不产生第 3 格。 */
   const openSplit = useCallback((tab: WorkspaceTab, mode: 'graph' | 'file' | 'copy') => {
@@ -1413,10 +1446,15 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
           {graphTabOpen && (
             <div
               className={`kb-pane${graphActive ? '' : ' kb-pane--closed'}`}
+              data-testid="kb-graph-pane"
               inert={!graphActive}
               aria-hidden={!graphActive || undefined}
             >
-              <GraphPage active={graphActive} />
+              <GraphPage
+                active={graphActive}
+                graphScope={graphTabScope}
+                onScopeReset={() => setGraphTabScope(null)}
+              />
             </div>
           )}
           {/* 副视图（单库分屏右格）：companion 存在期间 keep-alive 常驻挂载；
@@ -1439,7 +1477,12 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
               style={{ left: `${(split?.ratio ?? 0.5) * 100}%` }}
             >
               {split.companion.type === 'graph' ? (
-                <GraphPage active={companionShown} onCloseCompanion={() => split.setCompanion(null)} />
+                <GraphPage
+                  companion
+                  active={companionShown}
+                  onCloseCompanion={() => split.setCompanion(null)}
+                  graphScope={companionScope}
+                />
               ) : (
                 <KbMainContent
                   companion
