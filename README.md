@@ -47,9 +47,22 @@ Every task's output is written back as Markdown — a reusable, long-term asset.
 
 Beyond the tool itself, Molio offers **ready-made structured knowledge graphs** — entire books and professional domains pre-organized into AI-ready knowledge bases you can import in one click, no building from scratch.
 
-Covering **literature, history, philosophy, traditional Chinese medicine, and medicine**, with **new resources added regularly**. Highlights include the ontology knowledge base, the *Zizhi Tongjian* knowledge system, and an obstetric-ultrasound knowledge base — free starter sets and premium deep-dive graphs alike. See the resource library for the full, always-current catalog.
+Covering **literature, history, philosophy, traditional Chinese medicine, medicine, and AI engineering**, with **new resources added regularly**. Highlights include the ontology knowledge base, the *Zizhi Tongjian* knowledge system, and an obstetric-ultrasound knowledge base. See the resource library for the full, always-current catalog.
 
 > These are uniquely structured assets that AI cannot conjure on its own. Import one into Molio and instantly run AI Q&A, relationship lookup, and topical research.
+
+- [*Dream of the Red Chamber*: characters and imagery across all 120 chapters](https://molio.cn/resource/01M110NNMKNWXKBXT01HVJ06ZW.html)
+- [*Jin Ping Mei*: people, commerce and social structure](https://molio.cn/resource/01M2GAA83Q83CMQZPN40T9GQZ8.html)
+- [*Shiji* (Records of the Grand Historian): people, institutions, thought](https://molio.cn/resource/01M10WWK7WNMM61QNJJJXHNWS2.html)
+- [*Zizhi Tongjian*: 1,362 years of rise and fall](https://molio.cn/resource/01M10RZP9118BA6YRBZ1D4FKM2.html)
+- [*History of Ming*: empire, institutions and court politics](https://molio.cn/resource/01M111M5CSYX96FTKGC3V1QC2T.html)
+- [*Zhouyi*: all 64 hexagrams, with line-change and image-number analysis](https://molio.cn/resource/01M12YMV1144F4RZMX1HBK8GQ0.html)
+- [Laozi & Zhuangzi: core concept system](https://molio.cn/resource/01M114523M19P4J7GZMZ7E6188.html)
+- [Chinese and Western philosophy: a knowledge base for local AI](https://molio.cn/resource/01M10MC4S9ZH54WVFCXJWZ2JWS.html)
+- [Traditional Chinese medicine classics: six-meridian and triple-burner pattern differentiation](https://molio.cn/resource/01M112AA9MV91T3FJD5Z2GSPY8.html)
+- [Obstetric and gynecologic ultrasound: fetal anomalies, signs and differential diagnosis](https://molio.cn/resource/01M1152PE8YE365S9ZXDMNYCW6.html)
+- [Knowledge engineering: ontology, RAG, GraphRAG and agent engineering](https://molio.cn/resource/01M13QT669Q6E94PWACEH00YJF.html)
+- [Guangdong gaokao application planning: universities and majors](https://molio.cn/resource/01M2DFJ9E66FARK5SEBMPT92K0.html)
 
 **[Browse all resources →](https://molio.cn/resources.html)**
 

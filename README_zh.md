@@ -47,9 +47,22 @@ Claude Code、Codex、Gemini CLI、Qwen Code 等 Agent 在你的知识空间里�
 
 除了工具本身，Molio 还提供**现成的结构化知识图谱**——把一本书、一个专业领域预先整理成可直接导入 AI 的知识底座，开箱即用，不用从零搭建。
 
-涵盖**文学、历史、哲学、中医、医学**等专业领域，**持续上新**。代表性资源如本体知识库、资治通鉴知识体系、妇产超声知识体系等，既有免费入门资源，也有深度整理的精品图谱——完整与最新清单见资源库页面。
+涵盖**文学、历史、哲学、中医、医学、AI 工程**等专业领域，**持续上新**。代表性资源如本体知识库、资治通鉴知识体系、妇产超声知识体系等。完整与最新清单见资源库页面。
 
 > 这些是「人整理出来、AI 现搜不到现成结构」的独特内容。一键导入 Molio，立刻用 AI 做问答、关系查询、主题研究。
+
+- [《红楼梦》人物与意象关系图谱：120 回原著知识图鉴](https://molio.cn/resource/01M110NNMKNWXKBXT01HVJ06ZW.html)
+- [《金瓶梅》人物·商业·社会运行全景知识图谱](https://molio.cn/resource/01M2GAA83Q83CMQZPN40T9GQZ8.html)
+- [《史记》人物·制度·思想全景图谱](https://molio.cn/resource/01M10WWK7WNMM61QNJJJXHNWS2.html)
+- [《资治通鉴》千年兴亡：人物、事件与制度知识图谱](https://molio.cn/resource/01M10RZP9118BA6YRBZ1D4FKM2.html)
+- [《明史》帝国兴衰知识图谱：人物、制度与朝局演变](https://molio.cn/resource/01M111M5CSYX96FTKGC3V1QC2T.html)
+- [《周易》六十四卦全解｜卦变·象数·义理知识图谱](https://molio.cn/resource/01M12YMV1144F4RZMX1HBK8GQ0.html)
+- [老庄思想图谱：《道德经》与《庄子》核心概念体系](https://molio.cn/resource/01M114523M19P4J7GZMZ7E6188.html)
+- [中西哲学思想图谱：给你本地 AI 的哲学知识底座](https://molio.cn/resource/01M10MC4S9ZH54WVFCXJWZ2JWS.html)
+- [中医经典·六经·三焦辨证全景知识库·古文新编](https://molio.cn/resource/01M112AA9MV91T3FJD5Z2GSPY8.html)
+- [妇产超声知识图谱：胎儿畸形诊断、征象与鉴别体系](https://molio.cn/resource/01M1152PE8YE365S9ZXDMNYCW6.html)
+- [知识工程全景图谱-RAG-本体-Agent 工程](https://molio.cn/resource/01M13QT669Q6E94PWACEH00YJF.html)
+- [广东高考志愿填报·高校专业全景知识库](https://molio.cn/resource/01M2DFJ9E66FARK5SEBMPT92K0.html)
 
 **[浏览全部资源 →](https://molio.cn/resources.html)**
 
