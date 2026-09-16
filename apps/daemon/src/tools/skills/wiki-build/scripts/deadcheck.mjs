@@ -20,7 +20,8 @@
 //   exit 2  : usage / vault not found
 //
 // Resolution rules (mirrors daemon routes/graph.ts so what passes here also
-// renders as a real node in the graph view):
+// renders as a real node in the graph view — both sides skip code spans, so a
+// [[...]] inside a fence/inline code is neither a dead link nor a graph node):
 //   - [[李白]]            → any page whose basename (no .md) is 李白
 //   - [[entities/李白]]   → path-suffix match wiki/entities/李白.md, else leaf
 //   - [[李白|诗仙]]       → target is the part before |
@@ -29,6 +30,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { residueRe, codeIntervals, frontmatterEnd, overlaps, protectedIntervals } from './lib/linktext.mjs';
 
 function usage() {
   process.stderr.write(
@@ -79,17 +81,8 @@ function collectPages(vault) {
   return pages;
 }
 
-/** Extract wikilink targets from markdown content (same shape as graph.ts). */
-function extractTargets(content) {
-  const out = [];
-  const re = /\[\[([^\]|#]+?)(?:\|[^\]]+)?\]\]/g;
-  let m;
-  while ((m = re.exec(content)) !== null) {
-    const raw = (m[1] ?? '').trim();
-    if (raw) out.push(raw);
-  }
-  return out;
-}
+/** Wikilink pattern (same shape as graph.ts): target = part before | or #. */
+const LINK_RE = /\[\[([^\]|#]+?)(?:\|[^\]]+)?\]\]/g;
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
@@ -128,20 +121,41 @@ function main() {
   // dead target → occurrences [{file, line}]
   const dead = new Map();
   let occurrences = 0;
+  const residue = [];           // prose residue — linkpass auto-cleans these
+  const residueProtected = [];  // inside code/quotes/frontmatter — reported, never auto-cleaned
   for (const p of pages) {
     const abs = path.join(vault, 'wiki', p.rel);
     let content;
     try { content = fs.readFileSync(abs, 'utf-8'); } catch { continue; }
+    const code = codeIntervals(content);
     const lines = content.split('\n');
+    let lineStart = 0;
     lines.forEach((ln, i) => {
-      for (const target of extractTargets(ln)) {
-        if (resolves(target)) continue;
+      for (const lm of ln.matchAll(LINK_RE)) {
+        const raw = (lm[1] ?? '').trim();
+        if (!raw) continue;
+        // Inside a code span [[...]] is literal text — it renders as-is, so
+        // it can be neither a live link nor a dead one. (Quotes/frontmatter
+        // DO render links and stay checked.)
+        if (overlaps([lineStart + lm.index, lineStart + lm.index + lm[0].length], code)) continue;
+        if (resolves(raw)) continue;
         occurrences++;
-        const key = target.toLowerCase();
-        if (!dead.has(key)) dead.set(key, { target, files: [] });
+        const key = raw.toLowerCase();
+        if (!dead.has(key)) dead.set(key, { target: raw, files: [] });
         dead.get(key).files.push({ file: `wiki/${p.rel}`, line: i + 1 });
       }
+      lineStart += ln.length + 1;
     });
+    // Residue scan: same never-touched regions as linkpass cleanup. Matches
+    // inside those regions are still reported (as an informational bucket) so
+    // the clue survives — but nobody promises an auto-clean for them.
+    const prot = protectedIntervals(content, frontmatterEnd(content), { links: false });
+    for (const rm of content.matchAll(residueRe())) {
+      const span = [rm.index, rm.index + rm[0].length];
+      const line = content.slice(0, rm.index).split('\n').length;
+      const entry = { file: `wiki/${p.rel}`, line, text: rm[0] };
+      (overlaps(span, prot) ? residueProtected : residue).push(entry);
+    }
   }
 
   const deadList = [...dead.values()].sort((a, b) => b.files.length - a.files.length);
@@ -150,6 +164,10 @@ function main() {
     pages: pages.length,
     deadTargets: deadList.length,
     occurrences,
+    residue: residue.length,
+    residueProtected: residueProtected.length,
+    residueList: residue.slice(0, 100), // cap: the NOTE is for humans
+    residueProtectedList: residueProtected.slice(0, 100),
     dead: deadList,
   };
 
@@ -157,7 +175,7 @@ function main() {
     fs.mkdirSync(path.dirname(path.resolve(opts.json)), { recursive: true });
     fs.writeFileSync(opts.json, JSON.stringify(report, null, 2));
   }
-  process.stderr.write(JSON.stringify({ ok: report.ok, pages: pages.length, deadTargets: deadList.length, occurrences }) + '\n');
+  process.stderr.write(JSON.stringify({ ok: report.ok, pages: pages.length, deadTargets: deadList.length, occurrences, residue: residue.length, residueProtected: residueProtected.length }) + '\n');
 
   if (!opts.quiet) {
     if (report.ok) {
@@ -170,6 +188,17 @@ function main() {
         process.stdout.write(`  [[${d.target}]] × ${d.files.length}  <- ${locs}${more}\n`);
       }
       process.stdout.write('\nFix before declaring build complete: create (stub) pages for these targets, or rewrite the links to an existing page / plain text. Then re-run deadcheck.\n');
+    }
+    if (residue.length) {
+      process.stdout.write(`deadcheck: NOTE — ${residue.length} legacy link-residue occurrence(s) matching [[T|Y]]Y]] (pre-idempotency linkpass damage; self-copies into new pages):\n`);
+      for (const r of residue.slice(0, 10)) process.stdout.write(`  ${r.file}:${r.line}  ${r.text}\n`);
+      if (residue.length > 10) process.stdout.write(`  … (+${residue.length - 10} more)\n`);
+      process.stdout.write('Not a gate failure — run linkpass.mjs to collapse them to plain text mechanically.\n');
+    }
+    if (residueProtected.length) {
+      process.stdout.write(`deadcheck: NOTE — ${residueProtected.length} residue occurrence(s) inside code/quotes/frontmatter (often documentation of the pattern itself); left byte-identical on purpose, clean by hand if they are not documentation:\n`);
+      for (const r of residueProtected.slice(0, 5)) process.stdout.write(`  ${r.file}:${r.line}  ${r.text}\n`);
+      if (residueProtected.length > 5) process.stdout.write(`  … (+${residueProtected.length - 5} more)\n`);
     }
   }
 
