@@ -15,9 +15,9 @@
 
 ---
 
-每个人都有自己的经验、方法和专业积累，但它们长期散落在笔记、文档和聊天记录中——AI 看不见它们，于是每一次对话，都从零开始。
+你的积累不止一种形态：散落在笔记、文档和聊天记录里的经验与方法，也有整本书、带图表的 PDF、成堆的行业资料。它们大多以 AI 读不下去的形态存在，于是每一次对话，都从零开始。
 
-Molio 把这些积累加工成 AI 可读、可调用的**个人知识底座**：Claude Code、Codex 等 Agent 进入你的知识空间，基于你的全部积累做研究、写作、问答、分析，产出以 Markdown 写回沉淀，底座越用越厚。所有内容存在你自己的电脑上，不经过任何第三方服务器。
+Molio 把它们统一加工成 AI 可读、可调用的**个人知识底座**：Claude Code、Codex 等 Agent 进入你的知识空间，基于你的全部积累做研究、写作、问答、分析，产出以 Markdown 写回沉淀，底座越用越厚。所有内容存在你自己的电脑上，不经过任何第三方服务器。
 
 还没有现成积累？[知识图谱资源库](https://molio.cn/resources.html)里有持续上新的**现成知识底座**，一键导入、开箱即用。
 
@@ -31,9 +31,11 @@ Molio 把这些积累加工成 AI 可读、可调用的**个人知识底座**：
 
 ### 🔁 它如何工作
 
-**01 · 收集与加工 — 从散落碎片，到可调用的知识底座**
+**01 · 收集与加工 — 从散落碎片，到一整本书，都变成可调用的知识底座**
 
-Chrome 一键剪藏（[Web Clipper](https://chromewebstore.google.com/detail/pjdacbbkjpegfkogoieejajljplngbik)）、Obsidian 目录直接打开、本地文档批量导入——纯 Markdown，零迁移、无锁定，随时切回；Wiki 自动提取实体与概念、构建索引与摘要，知识图谱在它们之间建立关联。数据被加工，才开始成为底座。
+输入不被格式限制：Chrome 一键剪藏（[Web Clipper](https://chromewebstore.google.com/detail/pjdacbbkjpegfkogoieejajljplngbik)）、Obsidian 目录直接打开、本地文档批量导入；扫描版 PDF 与 Word / PPT / Excel 由内置的 docling 做版面解析、OCR 与表格还原，图片直接取字；百万字级的长书走分层预处理与分块摘要，可断点续传。落盘的是纯 Markdown，零迁移、无锁定，随时切回。
+
+Wiki 再从这个统一的 Markdown 层里提取实体与概念、建立密集交叉链接与分层索引——数据被加工，才开始成为底座。
 
 **02 · Agent 工作 — 基于你的数据运行**
 
@@ -42,6 +44,20 @@ Claude Code、Codex、Gemini CLI、Qwen Code 等 Agent 在你的知识空间里�
 **03 · 沉淀回流 — 底座越用越厚**
 
 每一次任务的产出都以 Markdown 写回知识空间，成为可复用的长期资产；知识图谱随之生长，下一次任务站得更高。想对外发布？doocs/md 排版 + doocs/cose 一键分发 30+ 平台，出口就在这里。
+
+### 📥 支持的输入
+
+| 输入 | 怎么处理 |
+|------|------|
+| Markdown / TXT / HTML / CSV 等文本 | 直接读入，也是知识库的默认形态 |
+| PDF | 版面解析 + OCR + 表格还原 → Markdown |
+| Word / PPT / Excel | 同一条管线，保留标题层级与表格结构 |
+| 图片（PNG / JPG / TIFF） | OCR 取字后入库 |
+| 网页 | Chrome 一键剪藏，或由微信文章提取器抓取正文 |
+| Obsidian 目录 | 直接打开，原文件只读、不改写 |
+| 百万字级长书 | 分层预处理 + 分块摘要，可断点续传 |
+
+> PDF / Office 的转换由内置的 docling 完成。首次转换需要下载 docling 与约 500MB 的模型，之后复用缓存。
 
 ### 📦 知识图谱资源库
 
