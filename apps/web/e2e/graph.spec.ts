@@ -54,4 +54,97 @@ test.describe('Graph as tab', () => {
     // 图谱 pane 仍在 DOM（挂载、隐藏），证明 keep-alive 而非 re-mount
     await expect(page.locator('.graph-page')).toHaveCount(1);
   });
+
+  test('dark theme: hidden (keep-alive) graph tab must not repaint the main area light', async ({ page }) => {
+    // 深色主题在应用加载前写入 localStorage（否则首帧是浅色）
+    await page.addInitScript(() => localStorage.setItem('molio.theme', 'dark'));
+    await page.goto(`http://localhost:5173/knowledge?vault=${vault.id}`);
+    await expect(page.locator('.kb-shell')).toBeVisible({ timeout: 10_000 });
+
+    const alpha = page.locator('.kb-tree-item').filter({ hasText: 'alpha.md' });
+    await expect(alpha).toBeVisible({ timeout: 10_000 });
+    await alpha.click();
+    await expect(page.locator('.kb-wtab.is-active')).toContainText('alpha.md', { timeout: 5_000 });
+
+    // 图谱标签 keep-alive 常驻：切回文档后 .graph-page 仍在 DOM（仅 visibility:hidden）
+    await clickNav(page, 'graph');
+    await expect(page.locator('.graph-page')).toBeVisible({ timeout: 10_000 });
+    await alpha.click();
+    await expect(page.locator('.kb-wtab.is-active')).toContainText('alpha.md', { timeout: 5_000 });
+    await expect(page.locator('.graph-page')).toHaveCount(1);
+
+    // 回归：图谱画布底曾把 .entry-main 硬编码成 #FAFAFA，且 :has() 只看 DOM 存在性，
+    // 于是隐藏的图谱标签也会让文档区整片发白。文档 pane 各层透明，底色就是 .entry-main。
+    const bg = await page.locator('.entry-main').evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).toBe('rgb(24, 24, 22)'); // --bg（深色）= #181816
+  });
+
+  // ── 引擎销毁故障隔离（v0.3.56 线上全局白屏回归）──
+  // 线上崩溃：engine.destroy() → app.destroy() 内部 Pixi Text 纹理卸载级联在纹理池失效态下走
+  // returnTexture → TypeError: Cannot read properties of undefined (reading 'push') → 异常逃逸出
+  // effect cleanup → 无 ErrorBoundary → React 整树卸载 → 全局白屏（切主页/切历史/关副格三个入口同一调用点）。
+  // 注入方式：在 app.destroy 上挂一次性炸弹抛同文 TypeError —— 故障类别与调用位置（app.destroy 内部）
+  // 与线上一致，且不依赖 Pixi 私有 API 结构。
+
+  /** 给当前页面的图谱引擎装上「app.destroy 一次性炸弹」（首次调用即抛线上同文 TypeError）。 */
+  async function injectDestroyTypeError(page: import('@playwright/test').Page) {
+    await page.waitForFunction(() => {
+      const eng = (window as unknown as { __graphEngine?: { app?: unknown } | null }).__graphEngine;
+      return !!eng?.app;
+    }, undefined, { timeout: 15_000 });
+    await page.evaluate(() => {
+      const eng = (window as unknown as {
+        __graphEngine: { app: { destroy: (...args: unknown[]) => void } };
+      }).__graphEngine;
+      const orig = eng.app.destroy.bind(eng.app);
+      eng.app.destroy = (...args: unknown[]) => {
+        eng.app.destroy = orig;
+        throw new TypeError("Cannot read properties of undefined (reading 'push')");
+      };
+    });
+  }
+
+  test('engine destroy failure must not take down the app (graph tab → home)', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err?.message ?? String(err)));
+
+    await page.goto(`http://localhost:5173/knowledge?vault=${vault.id}`);
+    await expect(page.locator('.kb-shell')).toBeVisible({ timeout: 10_000 });
+
+    await clickNav(page, 'graph');
+    await expect(page.locator('.graph-page')).toBeVisible({ timeout: 10_000 });
+    await injectDestroyTypeError(page);
+
+    // 切主页触发 KB 页卸载 → engine.destroy() → 炸弹在 Pixi 纹理归还路径引爆。
+    // 回归要求：异常被引擎吞掉（不得逃逸成 pageerror），应用整体存活、主页正常渲染。
+    await clickNav(page, 'home');
+    await expect(page.locator('.home-landing')).toBeVisible({ timeout: 10_000 });
+    expect(pageErrors.filter((e) => e.includes("reading 'push'"))).toHaveLength(0);
+  });
+
+  test('engine destroy failure must not take down the app (close split companion)', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err?.message ?? String(err)));
+
+    await page.goto(`http://localhost:5173/knowledge?vault=${vault.id}`);
+    await expect(page.locator('.kb-shell')).toBeVisible({ timeout: 10_000 });
+
+    // 开一个文档 tab，再右键 → 分屏-图谱
+    const alpha = page.locator('.kb-tree-item').filter({ hasText: 'alpha.md' });
+    await expect(alpha).toBeVisible({ timeout: 10_000 });
+    await alpha.click();
+    await expect(page.locator('.kb-wtab.is-active')).toContainText('alpha.md', { timeout: 5_000 });
+
+    await page.locator('.kb-wtab.is-active').click({ button: 'right' });
+    await page.locator('[data-testid="tab-split-graph"]').click();
+    await expect(page.locator('[data-testid="kb-companion-pane"] .graph-page')).toBeVisible({ timeout: 10_000 });
+    await injectDestroyTypeError(page);
+
+    // 关闭副格 → 副格 GraphPage 卸载 → engine.destroy() → 炸弹引爆。
+    // 回归要求：异常被引擎吞掉，KB 工作区整体存活。
+    await page.locator('[data-testid="companion-close"]').click();
+    await expect(page.locator('[data-testid="kb-companion-pane"]')).toHaveCount(0);
+    await expect(page.locator('.kb-shell')).toBeVisible();
+    expect(pageErrors.filter((e) => e.includes("reading 'push'"))).toHaveLength(0);
+  });
 });
