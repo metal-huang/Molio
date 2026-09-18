@@ -10,6 +10,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { getVault } from '../core/db.js';
 import { scanTree, resolveFilePath } from '../core/knowledge.js';
+import { codeIntervals, intervalOverlaps } from '../core/wikilink-text.js';
 import type { GraphNode, GraphEdge, GraphData, DeadLinkInfo, GraphScope } from '@molio/contracts';
 
 /**
@@ -179,10 +180,15 @@ export function buildGraph(vaultPath: string): GraphData {
     const content = readFileSync(absPath, 'utf-8');
     const sourceKey = pathToKey.get(f.path)!;
 
+    // 代码块/行内代码里的 [[...]] 是字面文本，不渲染成链接 —— 不进图、不算死链。
+    // 与 deadcheck.mjs 的链接扫描同口径：检查员放行的东西，图谱里也不该冒出假节点。
+    const code = codeIntervals(content);
+
     // Match [[Page Name]] and [[Page Name|display]]
     const linkRegex = /\[\[([^\]|#]+?)(?:\|[^\]]+)?\]\]/g;
     let match: RegExpExecArray | null;
     while ((match = linkRegex.exec(content)) !== null) {
+      if (intervalOverlaps([match.index, match.index + match[0].length], code)) continue;
       const rawName = (match[1] ?? '').trim();
       if (!rawName) continue;
 

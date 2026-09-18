@@ -128,3 +128,33 @@ describe('buildGraph index/log exclusion', () => {
     assert.ok(!isGraphExcludedFile('login.md'));
   });
 });
+
+describe('buildGraph code-span handling (与 deadcheck 同口径)', () => {
+  it('[[links]] inside fenced/inline code are literal text — no node, no edge, no dead link', () => {
+    const g = buildGraph(
+      makeVault([
+        'a.md',
+        '# A\n\n文档示例：\n\n```\n[[ghost-in-fence]] 与 [[b]]\n```\n\n行内 `[[ghost-inline]]` 代码。\n\n正文 [[b]]。\n',
+      ], ['b.md', '# B\n']),
+    );
+
+    const keys = g.nodes.map((n) => n.key).sort();
+    assert.deepStrictEqual(keys, ['a.md', 'b.md'], '代码里的 [[...]] 不产生死链节点');
+    assert.strictEqual(g.deadLinks.length, 0);
+    assert.strictEqual(g.edges.length, 1, '只有正文里那条 [[b]] 成边');
+    const a = g.nodes.find((n) => n.key === 'a.md');
+    assert.strictEqual(a!.linkCount, 1, 'linkCount 不被代码里的链接虚增');
+  });
+
+  it('quotes and frontmatter still count (rendered as links, checked by deadcheck)', () => {
+    const g = buildGraph(
+      makeVault([
+        'a.md',
+        '---\ntitle: "[[fm-ghost]]"\n---\n# A\n\n他说：「[[quote-ghost]]」。\n',
+      ]),
+    );
+
+    const deadLabels = g.nodes.filter((n) => n.deadLink).map((n) => n.label).sort();
+    assert.deepStrictEqual(deadLabels, ['fm-ghost', 'quote-ghost'], '引文/frontmatter 里的链接照常进图');
+  });
+});

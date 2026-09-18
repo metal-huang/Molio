@@ -1,14 +1,14 @@
 ---
 name: wiki-build
 description: 构建/重建本地知识库的 Wiki。扫描 vault 中所有源文件，从中构建一个结构化的 wiki（源文件摘要、实体、概念、对比、概述页），创建分层 INDEX（根索引 + 各目录索引）/log/hot，密集交叉链接。支持超长源文件（百万字级小说等）：prep.mjs 确定性预处理 + 分层 digest 构建 + 断点续传。也能把旧单索引库的索引重构为分层布局。Triggers on: 构建 wiki, 重建 wiki, build wiki, 扫描源文件构建, 初始构建, 重新构建知识库, start wiki build, 重构索引, 索引分层, 索引迁移, restructure index.
-version: 2.0.0
+version: 2.1.0
 ---
 
 # wiki-build: 构建 Wiki
 
 wiki 不是一次性的输出，而是一个持续增长的复利资产 — 每次构建、导入、查询都会让它更丰富。
 
-> **维护注记**：wiki-* 五件套（build/query/ingest/save/lint）同版本号共进——改任一 skill 时，五个 `version:` 一起 bump 到同一下一个版本。
+> **维护注记**：wiki-* 五件套（build/query/ingest/save/lint）同版本号共进——改任一 skill 时，五个 `version:` 一起 bump 到同一下一个版本；同一 PR（或一次对外发布）内的连续修订只 bump 一次。
 
 ## 核心原则
 
@@ -286,8 +286,10 @@ node "<skill_dir>/scripts/linkpass.mjs" --vault . --batches .molio/wiki-build/ba
 node "<skill_dir>/scripts/deadcheck.mjs" --vault .
 ```
 
-- `linkpass --batches`：从批次 TSV 的别名列读取别名映射，把每个页面名/别名在其他页面正文中的首次出现包成 `[[ ]]`。**庙号/别名死链在这一步自动消解**（如"项王"→`[[项羽|项王]]`）
-- `deadcheck`：exit 0 才算通过。有死链 → 补页或改写链接，重跑直至 exit 0
+- `linkpass --batches`：从批次 TSV 的别名列读取别名映射，把每个页面名/别名在其他页面正文中的首次出现包成 `[[ ]]`。**庙号/别名死链在这一步自动消解**（如"项王"→`[[项羽|项王]]`）。每次运行还会顺手机械清理旧版遗留的 `[[T|Y]]Y]]` 双重包裹残渣（→ 纯文本 `Y`；代码块/引文/frontmatter 内的原样保留），防止残渣随页面拷贝自我复制
+  - **CJK 词中防护**：≤3 字的中文名/别名前后都紧贴汉字时视为词中子串，跳过不包（宁可漏链，不可错链——"心理"在"核心理念"里不包，"网络"在"神经网络"里不包）。页面名也不例外：`[[网络]]` 能正常解析，包错地方 deadcheck 看不出来，是静默损坏。注意：跳过的是该名字在本页的**唯一链接机会**（只包真首次出现），不是只跳过这一处。要恢复旧的全量包裹行为加 `--no-cjk-guard`
+  - **别名与页面名撞名**：页面名优先（`[[网络]]` 本就解析到 `网络.md`），撞名别名不会包成链接，会计入运行报告的 `collidedAliases`——curate 时应把这类别名改掉
+- `deadcheck`：exit 0 才算通过。有死链 → 补页或改写链接，重跑直至 exit 0；检出包裹残渣只报告不阻断（下次 linkpass 会自动清理）。代码块里的 `[[...]]` 是字面文本，不算死链也不参与清理；代码块/引文/frontmatter 内的残渣单独标注（`residueProtected`），linkpass 不会动它们，需要时手工清理。**引文与 frontmatter 里的死链照常拦下**（这些区域渲染时链接仍然生效），而这些区域所有自动工具一个字都不能动（要供 `prep.mjs verify` 逐字节核验），所以命中时的唯一出路是**补一个页面**——哪怕只是占位 stub
 
 ### 步骤 8：引文核验（确定性，零 LLM）
 
