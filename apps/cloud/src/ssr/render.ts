@@ -591,12 +591,76 @@ ${urls}
 // ── llms.txt ──
 
 /**
+ * 博客文章清单 —— **兜底用**。正常情况下走不到这里（见 loadBlogPosts）。
+ *
+ * 真相在静态站的 /blog/posts.json：由 molio-seo-geo 的 tools/blog_deploy.py
+ * **扫描 blog/*.html 自动生成**，不手工维护。
+ *
+ * 为什么不手工维护一份：人工清单必然过期。这份常量就漏过 2 篇
+ * （web-clipper-guide、wechat-formatting 上线后一直没登记）。
+ *
+ * 请求时 fetch posts.json，失败才退回这里——保证 llms.txt 永远是合法内容，不会 5xx。
+ * 于是：**新增博客只需重新部署静态站，不必重新部署本函数**。
+ *
+ * ⚠️ 这份兜底不必每次加文章都改，但建议随大版本顺手同步。
+ * 按时间倒序排列（最新的在前）。
+ */
+const BLOG_POSTS: { title: string; slug: string }[] = [
+  { title: '资治通鉴人物关系图：294 卷、626 个人物，一张图为什么不够用', slug: 'zizhitongjian-people-graph' },
+  { title: '史记知识体系：130 篇、近 3000 年，怎么读才不乱', slug: 'shiji-knowledge-system' },
+  { title: '明史人物与制度：列传 220 卷、311 个人物条目，每条都能回到原文', slug: 'mingshi-people-and-institutions' },
+  { title: '红楼梦知识图谱：60 个人物、6 组对照，怎么把人物读明白', slug: 'hongloumeng-knowledge-graph' },
+  { title: '2026 年最佳 Obsidian 替代方案推荐', slug: 'obsidian-alternative' },
+  { title: 'Molio vs Obsidian 深度对比：AI 时代知识库工具该怎么选', slug: 'molio-vs-obsidian' },
+  { title: '为什么本地知识库才是你的最佳选择', slug: 'local-knowledge-base' },
+  { title: 'Claude Code 图形界面完全指南', slug: 'claude-code-gui-guide' },
+  { title: '2026 年最佳网页剪藏工具推荐', slug: 'web-clipper-guide' },
+  { title: '微信公众号排版工具对比', slug: 'wechat-formatting' },
+];
+
+/**
+ * 拉取静态站的博客清单。
+ *
+ * 为什么不把博客清单也写成本文件的常量：博客是**静态内容**，放常量里等于
+ * 「发布一篇静态文章要重新部署整个函数」——而本函数同时服务 auth.molio.cn，
+ * 一次部署会把认证的常驻实例全部销毁重建。代价和收益完全不成比例。
+ *
+ * posts.json 由 nginx 直接吐出（静态文件），不会回环到本函数。
+ * 任何失败都退回 BLOG_POSTS，llms.txt 不会因此挂掉。
+ */
+async function loadBlogPosts(): Promise<{ title: string; slug: string }[]> {
+  try {
+    const res = await fetch(`${SITE_BASE}/blog/posts.json`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: unknown = await res.json();
+    if (Array.isArray(data)) {
+      const ok = data.filter(
+        (p): p is { title: string; slug: string } =>
+          !!p &&
+          typeof (p as Record<string, unknown>).title === 'string' &&
+          typeof (p as Record<string, unknown>).slug === 'string' &&
+          ((p as Record<string, unknown>).title as string).length > 0,
+      );
+      if (ok.length > 0) return ok;
+    }
+    throw new Error('posts.json 格式不符或为空');
+  } catch (e) {
+    console.error('[cloud] llms.txt 拉取博客清单失败，退回内置常量:', e);
+    return BLOG_POSTS;
+  }
+}
+
+/**
  * llms.txt：给 AI 爬虫 / 大模型读的站点说明书（设计：docs/2026-09-01-llms-txt-dynamic-design.md）。
  * 与 /sitemap-products.xml 对称 —— 运行时实时拼出全部在售商品，新上架自动出现，零手工维护。
+ * 商品段是真动态（读库）；博客段读静态站的 posts.json（见 loadBlogPosts）——
+ * 两者都不需要「改内容就得改代码」。
  * 定位「资源重心」：知识图谱商品是营收主角，Molio 软件降级为免费载体。
  * 纯文本 Markdown（text/plain），不产出 HTML；name/summary 是用户提交内容，过 escapeHtml 防注入。
  */
-export function renderLlmsTxt(listings: MarketListing[]): string {
+export async function renderLlmsTxt(listings: MarketListing[]): Promise<string> {
   const sorted = [...listings].sort((a, b) => a.priceCents - b.priceCents);
   const free = sorted.filter((m) => m.priceCents === 0);
   const paid = sorted.filter((m) => m.priceCents > 0);
@@ -657,10 +721,14 @@ export function renderLlmsTxt(listings: MarketListing[]): string {
     '',
     '## 博客文章',
     '',
-    '- [Obsidian 替代方案](https://molio.cn/blog/obsidian-alternative.html)',
-    '- [Molio vs Obsidian 对比](https://molio.cn/blog/molio-vs-obsidian.html)',
-    '- [Claude Code 图形界面指南](https://molio.cn/blog/claude-code-gui-guide.html)',
-    '- [本地知识库搭建](https://molio.cn/blog/local-knowledge-base.html)',
+  );
+
+  const blogPosts = await loadBlogPosts();
+  for (const p of blogPosts) {
+    out.push(`- [${p.title}](${SITE_BASE}/blog/${p.slug}.html)`);
+  }
+
+  out.push(
     '',
     '## 关键信息',
     '',

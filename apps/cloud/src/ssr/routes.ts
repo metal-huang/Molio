@@ -79,7 +79,7 @@ export function ssrRoutes(deps: SsrRoutesDeps): Hono {
     }
     c.header('Content-Type', 'text/plain; charset=utf-8');
     c.header('Cache-Control', SITEMAP_CACHE);
-    return c.body(renderLlmsTxt(listings));
+    return c.body(await renderLlmsTxt(listings));
   });
 
   return app;

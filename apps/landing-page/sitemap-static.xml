@@ -78,4 +78,28 @@
     <priority>0.7</priority>
     <changefreq>weekly</changefreq>
   </url>
+  <url>
+    <loc>https://molio.cn/blog/hongloumeng-knowledge-graph.html</loc>
+    <lastmod>2026-09-19</lastmod>
+    <priority>0.7</priority>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://molio.cn/blog/mingshi-people-and-institutions.html</loc>
+    <lastmod>2026-09-19</lastmod>
+    <priority>0.7</priority>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://molio.cn/blog/shiji-knowledge-system.html</loc>
+    <lastmod>2026-09-19</lastmod>
+    <priority>0.7</priority>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://molio.cn/blog/zizhitongjian-people-graph.html</loc>
+    <lastmod>2026-09-19</lastmod>
+    <priority>0.7</priority>
+    <changefreq>weekly</changefreq>
+  </url>
 </urlset>
