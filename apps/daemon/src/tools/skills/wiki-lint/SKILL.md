@@ -1,7 +1,7 @@
 ---
 name: wiki-lint
 description: 对本地知识库的 Wiki 做健康检查/质量审查。查孤立页、断链、断引用、frontmatter 缺失、空段落、内容矛盾、过时内容、INDEX 偏差、知识缺口，生成 lint 报告并给出补充方向建议。Triggers on: 健康检查, 检查 wiki 健康状况, lint, clean up wiki, wiki 维护, check the wiki, wiki audit, find orphans, 审查 wiki.
-version: 2.0.0
+version: 2.1.0
 ---
 
 # wiki-lint: Wiki 健康检查
@@ -37,7 +37,11 @@ wiki 相关内容的目录结构：
    ```bash
    grep -roh '\[\[[^]]*\]\]' wiki/ | sort | uniq -c | sort -rn
    ```
-   这一步能同时得到：所有被引用的页面名、引用频次，用于检测断链/缺失页面和引用结构。**孤立页的判定不靠这里的计数**——grep 会把 INDEX 的枚举链接算进入度，导致"每个 stub 都被 INDEX 链过 → 永远测不出孤儿"，用专用脚本（口径：排除 INDEX/log/hot 结构页）：
+   这一步能同时得到：所有被引用的页面名、引用频次，用于检测断链/缺失页面和引用结构。注意 grep 不会跳过代码块——**代码块/行内代码里的 `[[...]]` 是字面文本、不算链接**（与 deadcheck、图谱同口径），数到它们不要当断链报；断链的精确判定直接用专用脚本：
+   ```bash
+   node ".claude/skills/wiki-build/scripts/deadcheck.mjs" --vault .
+   ```
+   **孤立页的判定不靠这里的计数**——grep 会把 INDEX 的枚举链接算进入度，导致"每个 stub 都被 INDEX 链过 → 永远测不出孤儿"，用专用脚本（口径：排除 INDEX/log/hot 结构页）：
    ```bash
    node ".claude/skills/wiki-build/scripts/orphan-audit.mjs" --vault .
    ```
@@ -57,7 +61,7 @@ wiki 相关内容的目录结构：
 |---|--------|--------|------|
 | 1 | 孤立页面 | info | 没有任何其他页面链接指向的 wiki 页面。**判定用 `orphan-audit.mjs`**（见检查方法 3：排除 INDEX/log/hot 的枚举链接，因为枚举链接会掩盖真实孤儿）。入度=0 的 stub 多为"背景挂点误建页"，详见 wiki-build「建页粒度」的孤儿审计 |
 | 2 | 无出链页面 | info | 页面没有引用任何其他页面的 [[wiki 链接]] |
-| 3 | 断链 | warning | [[wiki 链接]] 指向不存在的页面 |
+| 3 | 断链 | warning | [[wiki 链接]] 指向不存在的页面。**判定用 `deadcheck.mjs`（见检查方法 3）**：代码块/行内代码里的 `[[...]]` 是字面文本、不算链接，要跳过（与 deadcheck、图谱同口径） |
 | 4 | 缺失交叉引用 | info | 应该互相链接但没有链接的相关页面 |
 | 5 | INDEX.md 偏差 | warning | 存在但未列出的页面，或列出但不存在的页面（目录索引与目录文件两层都查） |
 | 13 | 旧单索引布局 | warning | 根 INDEX.md 仍逐页罗列、内容目录无 INDEX.md。建议触发一次「入库/归档」自动升级，或显式说「重构索引」（见 wiki-build 的索引分层迁移） |
