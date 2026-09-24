@@ -15,6 +15,7 @@ import {
 } from './runtimes/launch.js';
 import { buildSpawnEnv, createStderrDecoder } from './runtimes/env.js';
 import { classifyStderrChunk } from './runtimes/stderr.js';
+import { resolveClaudeModels } from './runtimes/claude-models.js';
 import { createClaudeStreamHandler } from './streams/claude-stream.js';
 import { createCodexStreamHandler } from './streams/codex-stream.js';
 import { createJsonEventStreamHandler } from './streams/json-event-stream.js';
@@ -156,7 +157,7 @@ export class RunManager {
         }
       }
 
-      return this.toAgentInfo(def, result, { version, error: probeError ?? undefined });
+      return this.toAgentInfo(def, result, { version, error: probeError ?? undefined }, configuredEnv);
     });
   }
 
@@ -211,7 +212,7 @@ export class RunManager {
         if (result.binary) {
           probeResult = await probe(result.binary, def.versionArgs);
         }
-        return this.toAgentInfo(def, result, probeResult);
+        return this.toAgentInfo(def, result, probeResult, configuredEnv);
       }),
     );
     this.agentCache = { at: (this.detectDeps.now ?? Date.now)(), agents };
@@ -225,11 +226,30 @@ export class RunManager {
     def: RuntimeAgentDef,
     result: ResolveResult,
     probeResult: ProbeResult,
+    configuredEnv: Record<string, string> = {},
   ): AgentInfo {
     let available = result.binary !== null;
     if (result.binary && !probeResult.version && probeResult.error) {
       available = false;
     }
+
+    // claude 特有：从 ~/.claude/settings.json（CC Switch 等写入）解析真实
+    // 模型视图——静态 fallbackModels 与第三方端点的实际接入对不上。
+    // 合并顺序 settings.json → Molio agent env → 进程 env，与 spawn 一致。
+    let models = def.fallbackModels;
+    let defaultModel: AgentInfo['defaultModel'];
+    if (def.id === 'claude') {
+      const mergedEnv: Record<string, string> = { ...configuredEnv };
+      for (const [k, v] of Object.entries(process.env)) {
+        if (typeof v === 'string') mergedEnv[k] = v;
+      }
+      const resolved = resolveClaudeModels({ env: mergedEnv });
+      if (resolved) {
+        models = resolved.models;
+        defaultModel = resolved.defaultModel;
+      }
+    }
+
     return {
       id: def.id,
       name: def.name,
@@ -238,7 +258,8 @@ export class RunManager {
       source: result.source,
       version: probeResult.version,
       probeError: probeResult.error ?? null,
-      models: def.fallbackModels,
+      models,
+      defaultModel,
       installUrl: def.installUrl,
       installable: !!def.install,
     };

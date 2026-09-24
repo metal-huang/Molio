@@ -14,6 +14,8 @@ import { useI18n } from './i18n';
 import type { Locale } from './i18n';
 import { api } from './api/client';
 import { useActiveVault, vaultStore } from './stores/vaultStore';
+import { chatRuntimeStore, useChatAgentId } from './stores/chatRuntimeStore';
+import { OPEN_RUNTIME_SETTINGS_EVENT } from './components/RuntimeModelPill';
 import { authStore } from './stores/authStore';
 import { configStore, useAppConfig } from './stores/configStore';
 import { currentContextStore, type CurrentContext } from './stores/currentContextStore';
@@ -71,7 +73,9 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const [defaultAgentId, setDefaultAgentId] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  // 当前 runtime 选择迁移到 chatRuntimeStore（composer 的 runtime/model pill 与
+  // App 共享同一事实源）；此处只订阅 agentId 供 useChat / KB 面板消费。
+  const selectedAgent = useChatAgentId();
   const activeVault = useActiveVault();
   // 共享 config 快照（configStore，in-flight 去重）。首帧不再等 daemon：
   // locale 先用 localStorage 兜底立即渲染，config 到达后由 LanguageProvider
@@ -136,6 +140,14 @@ export default function App() {
     });
   }, [location.pathname]);
 
+  // 模型 pill 的未安装 runtime 行 → SPA 内跳「设置 → 运行时」。
+  // 走 router 而非 location.href：产物静态服务无 SPA history fallback，硬导航可能 404。
+  useEffect(() => {
+    const handler = () => navigate('/settings?tab=runtimes');
+    window.addEventListener(OPEN_RUNTIME_SETTINGS_EVENT, handler);
+    return () => window.removeEventListener(OPEN_RUNTIME_SETTINGS_EVENT, handler);
+  }, [navigate]);
+
   // 入口收敛（暂时屏蔽右下角悬浮按钮）：面板只在 KB 页经 💬问答 等入口唤起。
   // 离开 /knowledge 时若面板开着则自动收起——后台任务继续但不可见，回 KB 可重新唤起。
   useEffect(() => {
@@ -185,14 +197,14 @@ export default function App() {
 
     if (defaultAgentId) {
       if (agents.some((a) => a.id === defaultAgentId && a.available)) {
-        setSelectedAgent(defaultAgentId);
+        chatRuntimeStore.setAgentId(defaultAgentId);
       }
       return;
     }
 
     const firstAvailable = agents.find((a) => a.available);
     if (firstAvailable) {
-      setSelectedAgent(firstAvailable.id);
+      chatRuntimeStore.setAgentId(firstAvailable.id);
       setDefaultAgentId(firstAvailable.id);
       api.updateConfig({ defaultAgentId: firstAvailable.id }).catch(() => {});
     }
@@ -213,7 +225,7 @@ export default function App() {
     if (!id || id === defaultAgentId) return;
     setDefaultAgentId(id);
     if (agents.some((a) => a.id === id && a.available)) {
-      setSelectedAgent(id);
+      chatRuntimeStore.setAgentId(id);
     }
   }, [cfgDefaultAgentId, defaultAgentId, agents]);
 
@@ -265,7 +277,7 @@ export default function App() {
 
   const handleNewChat = () => {
     chat.reset();
-    setSelectedAgent(defaultAgentId ?? null);
+    chatRuntimeStore.setAgentId(defaultAgentId ?? null);
   };
 
   // 切 vault → 重置绑定旧 vault 的会话。首载/无 vault/未变化跳过；无会话无需重置。
