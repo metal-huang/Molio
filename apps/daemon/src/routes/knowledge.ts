@@ -8,6 +8,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFi
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { CreateVaultRequest } from '@molio/contracts';
+import { MAX_IMPORT_FILE_SIZE, MAX_IMPORT_BATCH_SIZE } from '@molio/contracts';
 import {
   listVaults,
   getVault,
@@ -487,7 +488,10 @@ export function knowledgeRoutes(
 
   // ─── File import (drag-and-drop / ImportModal) ───
 
-  const MAX_IMPORT_SIZE = 50 * 1024 * 1024; // 50 MB
+  // Limits live in @molio/contracts — shared with the web pre-flight checks
+  // so the UI filters files against exactly what the daemon enforces.
+  const MAX_IMPORT_SIZE = MAX_IMPORT_FILE_SIZE;
+  const MAX_BATCH_SIZE = MAX_IMPORT_BATCH_SIZE;
 
   // POST /api/knowledge/vaults/:id/import — import files via multipart
   app.post('/vaults/:id/import', async (c) => {
@@ -500,9 +504,9 @@ export function knowledgeRoutes(
     const rawLen = c.req.header('Content-Length');
     if (rawLen != null) {
       const contentLength = parseInt(rawLen, 10);
-      if (contentLength > MAX_IMPORT_SIZE) {
+      if (contentLength > MAX_BATCH_SIZE) {
         return c.json(
-          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (max 50MB) — compress the file and retry' } },
+          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (per-file max 100MB, batch max 400MB) — compress the file and retry' } },
           413,
         );
       }

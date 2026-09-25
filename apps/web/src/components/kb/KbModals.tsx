@@ -5,6 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { Vault } from '@molio/contracts';
+import { MAX_IMPORT_FILE_SIZE } from '@molio/contracts';
 import { api } from '../../api/client';
 
 // ═══════════════════════════════════════════
@@ -260,7 +261,7 @@ export function ImportModal({ show, vaultName, vaultId, onClose, onImportComplet
 
   const handleFiles = useCallback((fileList: FileList | null) => {
     if (!fileList) return;
-    const MAX_FILE_SIZE = 50 * 1024 * 1024;
+    const MAX_FILE_SIZE = MAX_IMPORT_FILE_SIZE;
     const validExts = [
       '.md', '.pdf', '.txt', '.docx', '.doc', '.html', '.htm',
       '.pptx', '.ppt', '.xlsx', '.xls',
@@ -276,7 +277,7 @@ export function ImportModal({ show, vaultName, vaultId, onClose, onImportComplet
       if (!validExts.includes(ext)) continue;
       if (file.size > MAX_FILE_SIZE) {
         skippedFiles.push(file.name);
-        newFiles.push({ name: file.name, size: file.size, error: '超过 50MB 限制，请压缩后导入' });
+        newFiles.push({ name: file.name, size: file.size, error: '超过 100MB 限制，请压缩后导入' });
         continue;
       }
       newFiles.push({ name: file.name, size: file.size });
