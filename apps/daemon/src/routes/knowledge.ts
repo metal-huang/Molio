@@ -28,6 +28,7 @@ import {
   deleteFile,
   createDirectory,
   deleteDirectory,
+  validateVaultPath,
   renamePath,
   ensureVaultDir,
   searchFiles,
@@ -64,6 +65,14 @@ export function knowledgeRoutes(
     const body = await c.req.json<CreateVaultRequest>();
     if (!body.name || !body.path) {
       return c.json({ error: { code: 'BAD_REQUEST', message: 'name and path are required' } }, 400);
+    }
+
+    // Reject dot-dir roots and vault nesting/overlap before touching disk —
+    // 2026-09 support incident: a user registered `<vault>\.claude` as a
+    // standalone vault and every reference then resolved against the wrong root.
+    const pathIssue = validateVaultPath(body.path, listVaults(db));
+    if (pathIssue) {
+      return c.json({ error: { code: pathIssue.code, message: pathIssue.message } }, 400);
     }
 
     try {

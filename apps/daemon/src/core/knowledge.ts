@@ -613,6 +613,84 @@ export function isInsideProtected(relPath: string): boolean {
   );
 }
 
+// ─── Vault root path validation ───
+
+/** Why validateVaultPath rejected a candidate vault root. */
+export interface VaultPathIssue {
+  code: 'VAULT_PATH_DOT_DIR' | 'VAULT_PATH_NESTED' | 'VAULT_PATH_EXISTS';
+  message: string;
+}
+
+/** Minimal vault snapshot validateVaultPath needs — satisfied by db Vault rows. */
+export interface ExistingVaultRef {
+  id: string;
+  name: string;
+  path: string;
+}
+
+/**
+ * Validate a candidate vault ROOT path before registration. Returns the first
+ * issue found, or null when the path is acceptable.
+ *
+ * Regression guard (2026-09 support incident): a user registered
+ * `<vault>\.claude` as a standalone vault — Windows Explorer does NOT hide
+ * dot-prefixed dirs — and the overlapping roots made stored references resolve
+ * against the wrong root, surfacing as "无法打开文件" across four vaults.
+ * Rejects:
+ *   - any path segment starting with '.' — dot-dirs are tool-internal
+ *     (.claude / .molio / .git / …), never knowledge roots;
+ *   - exact duplicates and nesting in EITHER direction (candidate inside an
+ *     existing vault, or an existing vault inside the candidate) — the same
+ *     relative path must never mean two different disk locations.
+ *
+ * Pure function over paths: existing vaults are passed in, so tests need no
+ * database. Comparison is case-insensitive where the filesystem is
+ * (Windows), exact elsewhere.
+ */
+export function validateVaultPath(
+  vaultPath: string,
+  existingVaults: ExistingVaultRef[] = [],
+  opts: { excludeVaultId?: string } = {},
+): VaultPathIssue | null {
+  const resolved = path.resolve(vaultPath);
+  const ci = process.platform === 'win32';
+  const norm = (p: string): string => (ci ? p.toLowerCase() : p);
+
+  // Dot-segment check — split on both separators so Windows-style input
+  // ('D:\AI\Molio\work\.claude') segments correctly on any platform.
+  const segments = resolved.split(/[\\/]+/).filter(Boolean);
+  const dotSegment = segments.find((s) => s.startsWith('.'));
+  if (dotSegment) {
+    return {
+      code: 'VAULT_PATH_DOT_DIR',
+      message:
+        `不能把「${dotSegment}」设为知识库文件夹：以点开头的文件夹（如 .claude、.molio）` +
+        '是软件或工具的内部目录，请选择存放资料的业务文件夹',
+    };
+  }
+
+  const cand = norm(resolved);
+  const candPrefix = cand.endsWith(path.sep) ? cand : cand + path.sep;
+  for (const v of existingVaults) {
+    if (opts.excludeVaultId && v.id === opts.excludeVaultId) continue;
+    const existing = norm(path.resolve(v.path));
+    if (cand === existing) {
+      return {
+        code: 'VAULT_PATH_EXISTS',
+        message: `该目录已被知识库「${v.name}」使用，请选择其他文件夹`,
+      };
+    }
+    const existingPrefix = existing.endsWith(path.sep) ? existing : existing + path.sep;
+    if (cand.startsWith(existingPrefix) || existing.startsWith(candPrefix)) {
+      return {
+        code: 'VAULT_PATH_NESTED',
+        message: `与知识库「${v.name}」的文件夹互相嵌套，请为知识库选择独立的文件夹`,
+      };
+    }
+  }
+  return null;
+}
+
 export function isTextFile(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return TEXT_EXTS.includes(ext);
