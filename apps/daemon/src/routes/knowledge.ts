@@ -501,7 +501,10 @@ export function knowledgeRoutes(
     if (rawLen != null) {
       const contentLength = parseInt(rawLen, 10);
       if (contentLength > MAX_IMPORT_SIZE) {
-        return c.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (max 50MB)' } }, 413);
+        return c.json(
+          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (max 50MB) — compress the file and retry' } },
+          413,
+        );
       }
     }
 
