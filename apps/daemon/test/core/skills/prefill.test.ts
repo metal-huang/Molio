@@ -74,7 +74,13 @@ describe('skills/prefill prefillFromContent', () => {
       const runManager = {
         createRun: (o: { cwd?: string; onTurnComplete?: (text: string) => void }) => {
           capturedCwd = o.cwd;
-          o.onTurnComplete?.(JSON.stringify({ name: 'N', description: 'D', instructions: 'I' }));
+          // 真实 RunManager 的 onTurnComplete 由流事件驱动，永远在 createRun
+          // 返回之后异步触发。这里若同步触发，settle() 会赶在 prefill 内部
+          // timeout 定时器赋值之前执行，留下 30s 悬挂定时器拖住测试进程
+          // （此文件曾在全量并行下因此撞上 --test-timeout=30000 被判 flaky）。
+          queueMicrotask(() =>
+            o.onTurnComplete?.(JSON.stringify({ name: 'N', description: 'D', instructions: 'I' })),
+          );
           return Promise.resolve('run-1');
         },
         onEvent: () => () => {},
@@ -84,8 +90,9 @@ describe('skills/prefill prefillFromContent', () => {
       } as unknown as RunManager;
 
       const result = await prefillFromContent('content', runManager, { molioHome: blockedAsFile });
-      // The orphan-cancel runs in createRun().then() — a microtask behind the
-      // settle; drain the queue before asserting on it.
+      // With the realistic async callback, settle() runs after createRun's
+      // .then() assigned runId, so the cancel goes through the normal path;
+      // drain the queue anyway so either cancel path is visible to the assert.
       await new Promise((r) => setImmediate(r));
 
       assert.equal(capturedCwd, os.tmpdir(), 'scratch cwd falls back to os.tmpdir()');
