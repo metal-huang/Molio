@@ -70,6 +70,7 @@
       ],
       "specs": [
         "create-vault-form",
+        "kb-vault-list-menu",
         "knowledge",
         "markdown-render",
         "kb-tree-sort-locate",
