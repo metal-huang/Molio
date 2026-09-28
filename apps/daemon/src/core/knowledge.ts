@@ -236,10 +236,49 @@ function readSample(filePath: string, n: number): Buffer {
 }
 
 /**
+ * Candidate relPaths to try for a requested file, in priority order:
+ *   1. the path as requested;
+ *   2. with Windows separators normalized to '/' — AI citations of Windows
+ *      paths often keep backslashes ('work\raw\a.txt') on any host OS;
+ *   3. with a leading vault-directory-name segment stripped — truncated
+ *      absolute citations arrive as '<vaultDir>/raw/a.txt' (2026-09 support
+ *      incident: '01M10…-vault/raw/…' references were unresolvable forever
+ *      even though the file sat at 'raw/…' inside the vault).
+ */
+function citationCandidates(vaultPath: string, relPath: string): string[] {
+  const out = new Set<string>([relPath]);
+  const normalized = relPath.replace(/\\/g, '/');
+  out.add(normalized);
+  const vaultDirName = path.basename(vaultPath);
+  const ci = process.platform === 'win32';
+  const eq = (a: string, b: string): boolean =>
+    ci ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const segs = normalized.split('/');
+  for (let i = segs.length - 2; i >= 0; i--) {
+    const seg = segs[i];
+    if (seg && eq(seg, vaultDirName)) {
+      out.add(segs.slice(i + 1).join('/'));
+      break;
+    }
+  }
+  return [...out];
+}
+
+/**
  * Try multiple fallback strategies to find a file that may be missing
  * an extension, in a subdirectory, or have case mismatches.
  */
 function resolveWithFallbacks(vaultPath: string, relPath: string): string {
+  for (const candidate of citationCandidates(vaultPath, relPath)) {
+    const hit = tryResolveCandidate(vaultPath, candidate);
+    if (hit) return hit;
+  }
+  // Return the original resolved path if all fallbacks fail
+  return resolveFilePath(vaultPath, relPath);
+}
+
+/** Run the per-candidate fallback strategies (prefixes, .md, case, stem). */
+function tryResolveCandidate(vaultPath: string, relPath: string): string | null {
   const ext = path.extname(relPath).toLowerCase();
   const hasExt = !!ext;
 
@@ -318,8 +357,8 @@ function resolveWithFallbacks(vaultPath: string, relPath: string): string {
     if (found) return found;
   }
 
-  // Return the original resolved path if all fallbacks fail
-  return resolveFilePath(vaultPath, relPath);
+  // All strategies missed for this candidate
+  return null;
 }
 
 /**
