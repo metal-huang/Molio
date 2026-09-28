@@ -532,6 +532,9 @@ interface ConfirmDialogProps {
   tertiaryLabel?: string;
   onTertiary?: () => void;
   danger?: boolean;
+  /** Hide the 取消 button — for informational dialogs whose only action is to
+   *  dismiss (two buttons with identical outcomes read as a choice that isn't). */
+  hideCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -544,6 +547,7 @@ export function ConfirmDialog({
   tertiaryLabel,
   onTertiary,
   danger = false,
+  hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -572,7 +576,9 @@ export function ConfirmDialog({
           </p>
         </div>
         <div className="kb-modal-footer">
-          <button className="kb-btn kb-btn-ghost" onClick={onCancel}>取消</button>
+          {!hideCancel && (
+            <button className="kb-btn kb-btn-ghost" onClick={onCancel}>取消</button>
+          )}
           {tertiaryLabel && onTertiary && (
             <button className="kb-btn kb-btn-ghost" onClick={onTertiary}>{tertiaryLabel}</button>
           )}
