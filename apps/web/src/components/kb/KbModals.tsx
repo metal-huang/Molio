@@ -277,7 +277,7 @@ export function ImportModal({ show, vaultName, vaultId, onClose, onImportComplet
       if (!validExts.includes(ext)) continue;
       if (file.size > MAX_FILE_SIZE) {
         skippedFiles.push(file.name);
-        newFiles.push({ name: file.name, size: file.size, error: '超过 100MB 限制，请压缩后导入' });
+        newFiles.push({ name: file.name, size: file.size, error: '超过 100MB 限制，请压缩文件体积后再导入（打包成 zip 压缩包无效）' });
         continue;
       }
       newFiles.push({ name: file.name, size: file.size });

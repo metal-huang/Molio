@@ -1127,7 +1127,7 @@ export function KnowledgeBasePage({ agentId, chatPanelRef }: KnowledgeBasePagePr
     const validFiles = Array.from(files).filter((f) => f.size <= MAX_FILE_SIZE);
     const preflightErrors: string[] = [];
     if (oversized.length > 0) {
-      preflightErrors.push(`${oversized.length} 个文件超过 100MB 限制，请压缩后导入`);
+      preflightErrors.push(`${oversized.length} 个文件超过 100MB 限制，请压缩文件体积后再导入`);
     }
     if (validFiles.length === 0) {
       showToast(preflightErrors.join('，'));

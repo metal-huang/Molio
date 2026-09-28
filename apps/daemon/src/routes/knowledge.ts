@@ -506,7 +506,7 @@ export function knowledgeRoutes(
       const contentLength = parseInt(rawLen, 10);
       if (contentLength > MAX_BATCH_SIZE) {
         return c.json(
-          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (per-file max 100MB, batch max 400MB) — compress the file and retry' } },
+          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (per-file max 100MB, batch max 400MB) — reduce the file size and retry (zipped archives are not importable)' } },
           413,
         );
       }
