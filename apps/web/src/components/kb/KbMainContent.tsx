@@ -5,7 +5,7 @@
  * - Binary (pdf/docx/pptx): file info card + "open with system app" button
  */
 
-import { useEffect, useState, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback, lazy, Suspense, type RefObject } from 'react';
 import { MAX_ASK_SELECTION } from './kb-constants';
 import type { FileContent } from '@molio/contracts';
 import type { ThemeConfig } from './MdStylePanel';
@@ -20,7 +20,7 @@ import type { KbCodeMirrorViewerHandle } from './KbCodeMirrorViewer';
 import { KbFrontmatterCard } from './KbFrontmatterCard';
 import { formatFileSize } from '../../utils/format';
 import { preprocessKbMarkdown } from '../../hooks/useKnowledge';
-import { useScrollMemory } from '../../hooks/useScrollMemory';
+import { useScrollMemory, type ScrollIntent } from '../../hooks/useScrollMemory';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useNavigationHistory, navigationHistoryStore } from '../../stores/navigationHistoryStore';
@@ -136,6 +136,12 @@ interface KbMainContentProps {
   companion?: boolean;
   /** 副视图（分屏）时头部右侧的关闭 ×（而非独立的副格标题栏）。 */
   onCloseCompanion?: () => void;
+  /**
+   * 本次导航的滚动落位意图（restore = 切回已开着的文档；fresh = 开进没有它的
+   * 标签）。由 KnowledgeBasePage 在触发选择前**同步**写入（ref，不是 state；
+   * 原因见 useScrollMemory 约束 5）。缺省 = restore。
+   */
+  scrollIntentRef?: RefObject<ScrollIntent>;
 }
 
 export function KbMainContent({
@@ -166,6 +172,7 @@ export function KbMainContent({
   onNavigateToFile,
   companion = false,
   onCloseCompanion,
+  scrollIntentRef,
 }: KbMainContentProps) {
   const { t } = useI18n();
   const { canGoBack, canGoForward } = useNavigationHistory();
@@ -240,6 +247,7 @@ export function KbMainContent({
     key: scrollMemoryKey,
     fingerprint: scrollMemoryFp,
     ready: scrollMemoryReady,
+    intentRef: scrollIntentRef,
   });
 
   // Raw text used by the CM viewer — NO doocs preprocessing (those transforms
@@ -367,12 +375,13 @@ export function KbMainContent({
     return sel ? sel.toString().trim() : '';
   }, []);
 
-  // 小 .md 阅读路径的滚动容器在切换文件时被 React 复用（同位置同元素），
-  // scrollTop 会残留上一篇的位置，新文档因此从中间打开 —— 切文件时重置到顶部。
-  // CM / PDF 路径各自在内部重建视图，不依赖此效果。
-  useEffect(() => {
-    contentRef.current?.scrollTo({ top: 0 });
-  }, [selectedFile]);
+  // 这里曾有一段「selectedFile 变即 scrollTo 顶部」的 effect（#274）：它修掉了
+  // 容器复用导致的 scrollTop 残留，但把「点标签切回」「后退回到刚才那篇」也一并
+  // 顶回了顶部。现在滚动位置统一由 useScrollMemory 负责（见上方「阅读视窗位置
+  // 记忆」）：新开文档回顶、切回已有标签/前进后退恢复，残留由它的无记录分支兜住。
+  // 不要再把无条件回顶改回来——那会让恢复永远看不到效果。
+  // （CM / 源码路径的滚动容器是 CodeMirror 自己的 .cm-scroller，不在 contentRef
+  //   上，本 hook 对它 key 为 null、整体让位——那条路径的位置记忆尚未做。）
 
   // Capture-phase click handler: intercept wiki link clicks within the KB
   // shell. Prevents native <a href> navigation, checks if the file exists

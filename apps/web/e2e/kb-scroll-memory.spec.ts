@@ -8,17 +8,21 @@ import * as path from 'path';
  * @priority P1
  *
  * 阅读视窗位置记忆（useScrollMemory）：小 .md 阅读路径按文档身份记住滚动位置，
- * 切回时恢复；首次打开、内容被改写过、或显式「回到顶部」后从顶部开始。
+ * **切回一篇已经开着的文档**（点标签 / 前进后退）时恢复；**把文档开进一个原本
+ * 没有它的标签**（单标签里从树里点开另一篇）则从顶部重新开始。
  *
- * 回归的是三类行为：
- *  - 残留：原来滚动容器被 React 复用，切文档后停在上一篇的坐标上（属于别的
- *    文档的位置，纯 bug）；
- *  - 丢位置：只看「回顶」的话，引用式跳转（去别的文档核一下再回来）每次都要
- *    重新找回原文位置；
+ * 回归的是四类行为：
+ *  - 残留：滚动容器被 React 复用，切文档后停在上一篇的坐标上（属于别的文档的
+ *    位置，纯 bug）——fresh 语义下必须回顶；
+ *  - 丢位置：多标签切换（去别的文档核一下再回来）每次都从顶部重读；
  *  - 落位被截断：内容上屏是异步的（MdRenderer 在 effect 里 setState），若在
  *    「数据到手」时就落位，会被容器里上一篇的 scrollHeight 截断——上一篇越短
  *    截得越狠，短到没有滚动条时直接截成 0，看起来就是「切回长文档却回到顶部」。
- *    后两个用例（点标签 / 前进后退）专门守这条。
+ *    点标签 / 前进后退两个用例专门守这条；
+ *  - 内容改写后旧坐标作废（指纹校验）。
+ *
+ * 单标签「从树里点开另一篇 = 重新开始读」这一条的独立用例在 kb-scroll-reset.spec.ts
+ * （#274）里，两份 spec 都不该被改回去。
  *
  * Prerequisites: `pnpm dev` running (daemon :3100, web :5173).
  */
@@ -61,6 +65,33 @@ async function openDoc(page: Page, name: string, marker: string) {
   await expect(contentArea(page)).toContainText(marker, { timeout: 10_000 });
 }
 
+/**
+ * 把文档开进一个**独立标签**：先「+」建空标签，再从树里点开（空标签被回收）。
+ * 空标签是 recyclable 的，所以这一步保证文档拿到自己的标签，而不依赖此前开着什么。
+ */
+async function openInOwnTab(page: Page, name: string, marker: string) {
+  await page.locator('[data-testid="kb-tab-add"]').click();
+  await openDoc(page, name, marker);
+}
+
+/** 点标签切回（多标签切换 = 应恢复阅读位置的路径）。 */
+async function clickTab(page: Page, name: string) {
+  await page.locator('.kb-wtab').filter({ hasText: name }).first().click();
+}
+
+/**
+ * 关掉当前工作区里所有标签。标签状态持久化在 localStorage（按 vault），同一
+ * run 里的用例会看到上一个用例留下的标签——每个用例从确定状态开始。
+ */
+async function closeAllTabs(page: Page) {
+  for (let i = 0; i < 30; i++) {
+    const close = page.locator('.kb-wtab-close').first();
+    if ((await close.count()) === 0) return;
+    await close.click();
+    await page.waitForTimeout(30);
+  }
+}
+
 test.describe('KB 阅读视窗位置记忆', () => {
   test.beforeAll(async () => {
     vault = await createTempVault('e2e-kb-scroll-memory');
@@ -79,62 +110,79 @@ test.describe('KB 阅读视窗位置记忆', () => {
     await page.goto(`http://localhost:5173/knowledge?vault=${vault.id}`);
     await expect(page.locator('.kb-shell')).toBeVisible({ timeout: 5_000 });
     await expect(treeItem(page, 'long-a.md')).toBeVisible({ timeout: 10_000 });
+    await closeAllTabs(page);
   });
 
-  test('首次打开从顶部开始，切回原文档恢复到原位置', async ({ page }) => {
-    // A：滚到中间并确认记住
+  test('单标签下从树里换文档：新开的那篇从顶部开始，不复用上一篇的坐标', async ({ page }) => {
     await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    await scrollTo(page, 600);
+    await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(500);
+
+    // 开进「没有它的标签」（这里就是当前这个标签）→ 重新开始读，从顶部
+    await openDoc(page, 'long-b.md', 'B 的结尾标记');
+    expect(await scrollTopOf(page)).toBe(0);
+
+    await scrollTo(page, 1200);
+    await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(1100);
+
+    // 换回 A：A 也没有自己的标签了，同样是「重新开始读」
+    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    expect(await scrollTopOf(page)).toBe(0);
+  });
+
+  test('多标签切换：切回已开着的文档恢复各自的阅读位置', async ({ page }) => {
+    await openInOwnTab(page, 'long-a.md', 'A 的结尾标记');
     await scrollTo(page, 600);
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(500);
     const aTop = await scrollTopOf(page);
 
-    // B：首次打开 —— 必须从顶部开始，而不是停在 A 的坐标上（残留 bug）
-    await openDoc(page, 'long-b.md', 'B 的结尾标记');
-    expect(await scrollTopOf(page)).toBe(0);
-
-    // B 也滚到别处，使两者的位置可区分
+    // B 开进自己的标签（A 的标签仍然开着）
+    await openInOwnTab(page, 'long-b.md', 'B 的结尾标记');
+    expect(await scrollTopOf(page), 'B 是新开的，从顶部').toBe(0);
     await scrollTo(page, 1200);
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(1100);
 
-    // 回到 A：恢复 A 自己的位置
-    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    // 点标签切回 A：恢复 A 自己的位置（这是「去别的文档核一下再回来」的主场景）
+    await clickTab(page, 'long-a.md');
+    await expect(contentArea(page)).toContainText('A 的结尾标记');
     await expect.poll(() => scrollTopOf(page)).toBe(aTop);
 
-    // 再回 B：恢复 B 的位置（不是 A 的）
-    await openDoc(page, 'long-b.md', 'B 的结尾标记');
+    // 再切回 B：恢复 B 的位置（不是 A 的）
+    await clickTab(page, 'long-b.md');
+    await expect(contentArea(page)).toContainText('B 的结尾标记');
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(1100);
   });
 
-  test('文档内容被改写后旧位置作废，回到顶部', async ({ page }) => {
-    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+  test('文档内容被改写后旧位置作废，切回时回到顶部', async ({ page }) => {
+    await openInOwnTab(page, 'long-a.md', 'A 的结尾标记');
     await scrollTo(page, 800);
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(700);
 
     // 外部改写 A（AI 回写知识库的真实场景）→ size/mtime 变 → 指纹失效
     fs.appendFileSync(fileA, `\n\n## 追加段落\n\n${'新写入的内容。'.repeat(100)}\n`);
 
-    await openDoc(page, 'long-b.md', 'B 的结尾标记');
-    await openDoc(page, 'long-a.md', '追加段落');
+    await openInOwnTab(page, 'long-b.md', 'B 的结尾标记');
+    await clickTab(page, 'long-a.md');
+    await expect(contentArea(page)).toContainText('追加段落', { timeout: 10_000 });
 
     // 内容已变：不留在旧坐标上，从顶部开始（poll：落位发生在内容就绪后的 effect 里）
     await expect.poll(() => scrollTopOf(page)).toBe(0);
   });
 
   test('上一篇短到没有滚动条时，点标签切回长文档仍恢复原位置', async ({ page }) => {
-    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    await openInOwnTab(page, 'long-a.md', 'A 的结尾标记');
     await scrollTo(page, 4000);
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(3900);
 
-    // + 另开一个标签打开短文档 → 两篇同时开着，覆盖「点标签切换」路径
-    await page.locator('[data-testid="kb-tab-add"]').click();
-    await openDoc(page, 'short.md', 'S 的结尾标记');
+    // 另开一个标签打开短文档 → 两篇同时开着，覆盖「点标签切换」路径
+    await openInOwnTab(page, 'short.md', 'S 的结尾标记');
     expect(
       await contentArea(page).evaluate((el) => el.scrollHeight - el.clientHeight),
       '前提：短文档必须没有滚动条（否则测不到截断）',
     ).toBe(0);
 
     // 回到长文档：落位发生在新内容上屏之后，不该被短文档的高度截断到 0
-    await page.locator('.kb-wtab').filter({ hasText: 'long-a.md' }).first().click();
+    await clickTab(page, 'long-a.md');
     await expect(contentArea(page)).toContainText('A 的结尾标记');
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(3900);
   });
@@ -152,7 +200,7 @@ test.describe('KB 阅读视窗位置记忆', () => {
   });
 
   test('「回到顶部」按钮归零并同步记忆', async ({ page }) => {
-    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    await openInOwnTab(page, 'long-a.md', 'A 的结尾标记');
     await scrollTo(page, 700);
     await expect.poll(() => scrollTopOf(page)).toBeGreaterThan(600);
 
@@ -160,8 +208,9 @@ test.describe('KB 阅读视窗位置记忆', () => {
     expect(await scrollTopOf(page)).toBe(0);
 
     // 记忆已随之归零：切走再切回仍从顶部开始（而不是回到点按钮前的位置）
-    await openDoc(page, 'long-b.md', 'B 的结尾标记');
-    await openDoc(page, 'long-a.md', 'A 的结尾标记');
+    await openInOwnTab(page, 'long-b.md', 'B 的结尾标记');
+    await clickTab(page, 'long-a.md');
+    await expect(contentArea(page)).toContainText('A 的结尾标记');
     await expect.poll(() => scrollTopOf(page)).toBe(0);
   });
 });

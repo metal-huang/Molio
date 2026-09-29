@@ -6,11 +6,16 @@
  * 「显示出属于别的文档的坐标」，但会丢掉用户在原文档里的阅读位置 —— 而 KB 里最
  * 常见的动作恰恰是「去别的文档核一下再回来」。
  *
- * 本 hook 采用 restore 语义（VS Code 模型，非 Obsidian 默认）：
- * - 有该文档的位置记录且内容未变 → 恢复到原位；
- * - 首次打开 / 内容已被改写过 → 回顶部（reset 作为退化路径自动生效）。
+ * 落位语义（restore / fresh 两条路，由调用方按导航意图指定，见 intentRef）：
+ * - **restore**：点标签切回一个已经开着的文档、前进/后退回到刚才看过的地方 ——
+ *   有记录且内容未变就恢复到原位（VS Code 模型，非 Obsidian 默认；KB 里最常见的
+ *   动作就是「去别的文档核一下再回来」）。
+ * - **fresh**：把文档开进一个原本没有它的标签（单标签里从树/链接点开另一篇、
+ *   新标签首次打开）—— 这篇是「重新开始读」，旧记录作废、从顶部开始。
+ *   这也让 #274 修的那类「残留坐标」自然不成立（fresh 必回顶）。
+ * - 无记录 / 内容已被改写过 → 一律回顶部（reset 作为退化路径自动生效）。
  *
- * 三个关键实现约束（都不显然，改动时留意）：
+ * 五个关键实现约束（都不显然，改动时留意）：
  *
  * 1. **位置在滚动时持续写入，不依赖「切走时保存」**。切走那一刻 DOM 已经是新
  *    文档，若等 cleanup 再读 `scrollTop`，读到的可能已被新文档高度 clamp 过的值。
@@ -31,6 +36,11 @@
  * 4. **指纹不进 effect 依赖**。指纹含 mtime，用户保存编辑会改它；若进依赖，每次
  *    保存都会重跑切换逻辑并把视窗顶回顶部。
  *
+ * 5. **intentRef 用 ref 而非普通 prop 值**。意图必须与「哪一次选择」严格配对：
+ *    调用方在调 selectFile 之前同步写入 ref，hook 在 key 变化的那次 effect 里读。
+ *    若用 state 传值，遇到外部 store（useSyncExternalStore）与 setState 的刷新顺序
+ *    差异，可能出现「新文档 + 旧意图」的那一帧，从而按错误语义落位。
+ *
  * 记忆是进程内的（组件存活期），不做持久化：跨重启恢复的旧位置风险高于收益。
  */
 
@@ -45,6 +55,14 @@ interface ScrollMemoryEntry {
 
 /** 记忆条数上限（LRU）：同会话读过的文档数远超此值时不至于无界增长。 */
 const MAX_ENTRIES = 100;
+
+/**
+ * 本次导航的落位意图：
+ * - `restore`：切回一个已经开着的文档（点标签、前进/后退）→ 有记录就恢复原位
+ * - `fresh`：把文档开进一个原本没有它的标签（单标签里点开另一篇、新标签首开）
+ *   → 旧记录作废，从顶部开始
+ */
+export type ScrollIntent = 'restore' | 'fresh';
 
 export interface UseScrollMemoryOptions {
   /** 滚动容器（`overflow-y: auto` 的那个元素）。 */
@@ -62,6 +80,12 @@ export interface UseScrollMemoryOptions {
    * 注意不是「数据到手」——两者差一次渲染，早了会被上一篇的高度截断（约束 2）。
    */
   ready: boolean;
+  /**
+   * 本次导航的意图（见 ScrollIntent）。调用方必须在触发选择的**同一时刻同步**
+   * 写入（ref，不是 state —— 见约束 5）。缺省视为 `restore`（保守：只恢复，
+   * 不主动丢记录）。
+   */
+  intentRef?: RefObject<ScrollIntent>;
 }
 
 export interface UseScrollMemoryReturn {
@@ -74,6 +98,7 @@ export function useScrollMemory({
   key,
   fingerprint,
   ready,
+  intentRef,
 }: UseScrollMemoryOptions): UseScrollMemoryReturn {
   const memoryRef = useRef(new Map<string, ScrollMemoryEntry>());
   // 渲染期同步 ref，供滚动回调读取「此刻是哪个文档的哪个版本」。
@@ -96,10 +121,19 @@ export function useScrollMemory({
       return;
     }
 
-    const saved = memoryRef.current.get(key) ?? null;
-    pendingRef.current = saved;
-    // 无记录：立刻回顶（reset 的退化路径）。有记录则先不动，等 ready 时再落位。
-    if (!saved) el.scrollTo({ top: 0 });
+    const intent = intentRef?.current ?? 'restore';
+    if (intent === 'fresh') {
+      // 新开：这篇这次是「重新开始读」，旧记录作废——否则下次以 restore 回到它
+      // （点标签/后退）会跳回一个用户这次没见过的坐标。
+      memoryRef.current.delete(key);
+      pendingRef.current = null;
+      el.scrollTo({ top: 0 });
+    } else {
+      const saved = memoryRef.current.get(key) ?? null;
+      pendingRef.current = saved;
+      // 无记录：立刻回顶（reset 的退化路径）。有记录则先不动，等 ready 时再落位。
+      if (!saved) el.scrollTo({ top: 0 });
+    }
 
     const onScroll = () => {
       // 内容未就绪时容器里还是上一篇：此刻的滚动位置既不属于旧文档（它已经不在
