@@ -20,6 +20,7 @@ import type { KbCodeMirrorViewerHandle } from './KbCodeMirrorViewer';
 import { KbFrontmatterCard } from './KbFrontmatterCard';
 import { formatFileSize } from '../../utils/format';
 import { preprocessKbMarkdown } from '../../hooks/useKnowledge';
+import { useScrollMemory } from '../../hooks/useScrollMemory';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n';
 import { useNavigationHistory, navigationHistoryStore } from '../../stores/navigationHistoryStore';
@@ -197,6 +198,26 @@ export function KbMainContent({
   const category = fileName ? getFileCategory(fileName) : null;
   // CM path: text category, not too-large, and (large md OR non-markdown).
   const isCmPath = category === 'text' && !fileContent?.tooLarge && (isLargeMd || !isMarkdown);
+
+  // ── 阅读视窗位置记忆（仅小 .md 阅读路径） ──
+  // key 带 pane 前缀：同一文档同时出现在主格与副格时两者位置互不覆盖。
+  // vaultId + 相对路径 = 文档身份（文件 tab 的 id 本就是 `file:${path}`，等价）。
+  const isReadingPath = category === 'text' && isSmallMd && !isTypesetMode && !isEditMode && !!selectedFile;
+  const scrollMemoryKey = isReadingPath
+    ? `${companion ? 'companion' : 'main'}:${vaultId ?? ''}:${selectedFile ?? ''}`
+    : null;
+  // 指纹（size:modifiedAt）：文档被 AI/外部改写过则旧位置作废，回顶部。
+  const scrollMemoryFp =
+    fileContent != null ? `${fileContent.size}:${fileContent.modifiedAt}` : null;
+  // 内容已就绪 = 手上这份 fileContent 正是当前选中的文件。切换期间容器里还渲染着
+  // 上一篇（useKnowledge 不清空 fileContent），此时落位会被随后的替换吃掉。
+  const scrollMemoryReady = fileContent != null && fileContent.path === selectedFile;
+  const { scrollToTop } = useScrollMemory({
+    containerRef: contentRef,
+    key: scrollMemoryKey,
+    fingerprint: scrollMemoryFp,
+    ready: scrollMemoryReady,
+  });
 
   // Raw text used by the CM viewer — NO doocs preprocessing (those transforms
   // mutate HTML/rendered markdown, not raw source).
@@ -479,6 +500,24 @@ export function KbMainContent({
           {/* ── File edit / output actions (text files only, small-.md doocs path) ── */}
           {category === 'text' && selectedFile && !isCmPath && (
             <>
+              {/* 阅读路径的「回到顶部」—— 与 CM 路径的 kb-btn-top 同款同 testid
+                  （两条路径互斥，不会同时渲染）。有了位置记忆后，这是「我想从头
+                  重读」的显式逃逸口：CM 路径本来就有，阅读路径此前没有。 */}
+              {isReadingPath && (
+                <button
+                  type="button"
+                  className="kb-btn kb-btn-ghost"
+                  onClick={scrollToTop}
+                  title={t('kb.scrollToTop')}
+                  data-testid="kb-btn-top"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                    <line x1="12" y1="19" x2="12" y2="5" />
+                    <polyline points="5 12 12 5 19 12" />
+                  </svg>
+                </button>
+              )}
+
               {/* Save — only in editing modes (read mode has nothing to save) */}
               {onSave && (isEditMode || isTypesetMode) && (
                 <button type="button" className="kb-btn kb-btn-ghost" onClick={onSave} title={t('kb.save')}>
