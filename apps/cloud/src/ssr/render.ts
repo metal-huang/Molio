@@ -105,7 +105,6 @@ const NAV = `
     <div class="nav-links">
       <a href="/index.html" class="nav-link">首页</a>
       <a href="/resources.html" class="nav-link active">资源</a>
-      <a href="/help.html" class="nav-link">使用指南</a>
       <a href="/blog/index.html" class="nav-link">博客</a>
       <a href="/enterprise.html" class="nav-link">定制服务</a>
       <span id="nav-auth"></span><a href="https://github.com/zhuzhaoyun/Molio" target="_blank" rel="noopener noreferrer" class="nav-gh" aria-label="GitHub 仓库"><svg viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.102 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg></a>
@@ -124,15 +123,13 @@ const FOOTER = `
       <h4>产品</h4>
       <a href="/index.html">首页</a>
       <a href="/resources.html">资源</a>
-      <a href="/help.html">使用指南</a>
       <a href="/enterprise.html">定制服务</a>
       <a href="https://github.com/zhuzhaoyun/Molio" target="_blank" rel="noopener noreferrer">GitHub 开源</a>
     </div>
     <div class="footer-links">
       <h4>资源</h4>
-      <a href="/help.html">快速入门</a>
-      <a href="/help.html#step-3">排版发布</a>
-      <a href="/help.html#connect">连接微信</a>
+      <a href="https://www.bilibili.com/video/BV1M68H6nEGs/" target="_blank" rel="noopener noreferrer">2 分钟上手视频</a>
+      <a href="/resources.html">现成知识底座</a>
       <a href="https://github.com/zhuzhaoyun/Molio/issues" target="_blank" rel="noopener noreferrer">问题反馈</a>
     </div>
     <div class="footer-links">
@@ -591,12 +588,76 @@ ${urls}
 // ── llms.txt ──
 
 /**
+ * 博客文章清单 —— **兜底用**。正常情况下走不到这里（见 loadBlogPosts）。
+ *
+ * 真相在静态站的 /blog/posts.json：由 molio-seo-geo 的 tools/blog_deploy.py
+ * **扫描 blog/*.html 自动生成**，不手工维护。
+ *
+ * 为什么不手工维护一份：人工清单必然过期。这份常量就漏过 2 篇
+ * （web-clipper-guide、wechat-formatting 上线后一直没登记）。
+ *
+ * 请求时 fetch posts.json，失败才退回这里——保证 llms.txt 永远是合法内容，不会 5xx。
+ * 于是：**新增博客只需重新部署静态站，不必重新部署本函数**。
+ *
+ * ⚠️ 这份兜底不必每次加文章都改，但建议随大版本顺手同步。
+ * 按时间倒序排列（最新的在前）。
+ */
+const BLOG_POSTS: { title: string; slug: string }[] = [
+  { title: '资治通鉴人物关系图：294 卷、626 个人物，一张图为什么不够用', slug: 'zizhitongjian-people-graph' },
+  { title: '史记知识体系：130 篇、近 3000 年，怎么读才不乱', slug: 'shiji-knowledge-system' },
+  { title: '明史人物与制度：列传 220 卷、311 个人物条目，每条都能回到原文', slug: 'mingshi-people-and-institutions' },
+  { title: '红楼梦知识图谱：60 个人物、6 组对照，怎么把人物读明白', slug: 'hongloumeng-knowledge-graph' },
+  { title: '2026 年最佳 Obsidian 替代方案推荐', slug: 'obsidian-alternative' },
+  { title: 'Molio vs Obsidian 深度对比：AI 时代知识库工具该怎么选', slug: 'molio-vs-obsidian' },
+  { title: '为什么本地知识库才是你的最佳选择', slug: 'local-knowledge-base' },
+  { title: 'Claude Code 图形界面完全指南', slug: 'claude-code-gui-guide' },
+  { title: '2026 年最佳网页剪藏工具推荐', slug: 'web-clipper-guide' },
+  { title: '微信公众号排版工具对比', slug: 'wechat-formatting' },
+];
+
+/**
+ * 拉取静态站的博客清单。
+ *
+ * 为什么不把博客清单也写成本文件的常量：博客是**静态内容**，放常量里等于
+ * 「发布一篇静态文章要重新部署整个函数」——而本函数同时服务 auth.molio.cn，
+ * 一次部署会把认证的常驻实例全部销毁重建。代价和收益完全不成比例。
+ *
+ * posts.json 由 nginx 直接吐出（静态文件），不会回环到本函数。
+ * 任何失败都退回 BLOG_POSTS，llms.txt 不会因此挂掉。
+ */
+async function loadBlogPosts(): Promise<{ title: string; slug: string }[]> {
+  try {
+    const res = await fetch(`${SITE_BASE}/blog/posts.json`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data: unknown = await res.json();
+    if (Array.isArray(data)) {
+      const ok = data.filter(
+        (p): p is { title: string; slug: string } =>
+          !!p &&
+          typeof (p as Record<string, unknown>).title === 'string' &&
+          typeof (p as Record<string, unknown>).slug === 'string' &&
+          ((p as Record<string, unknown>).title as string).length > 0,
+      );
+      if (ok.length > 0) return ok;
+    }
+    throw new Error('posts.json 格式不符或为空');
+  } catch (e) {
+    console.error('[cloud] llms.txt 拉取博客清单失败，退回内置常量:', e);
+    return BLOG_POSTS;
+  }
+}
+
+/**
  * llms.txt：给 AI 爬虫 / 大模型读的站点说明书（设计：docs/2026-09-01-llms-txt-dynamic-design.md）。
  * 与 /sitemap-products.xml 对称 —— 运行时实时拼出全部在售商品，新上架自动出现，零手工维护。
+ * 商品段是真动态（读库）；博客段读静态站的 posts.json（见 loadBlogPosts）——
+ * 两者都不需要「改内容就得改代码」。
  * 定位「资源重心」：知识图谱商品是营收主角，Molio 软件降级为免费载体。
  * 纯文本 Markdown（text/plain），不产出 HTML；name/summary 是用户提交内容，过 escapeHtml 防注入。
  */
-export function renderLlmsTxt(listings: MarketListing[]): string {
+export async function renderLlmsTxt(listings: MarketListing[]): Promise<string> {
   const sorted = [...listings].sort((a, b) => a.priceCents - b.priceCents);
   const free = sorted.filter((m) => m.priceCents === 0);
   const paid = sorted.filter((m) => m.priceCents > 0);
@@ -652,15 +713,18 @@ export function renderLlmsTxt(listings: MarketListing[]): string {
     '',
     '- [首页](https://molio.cn/)：产品介绍、下载入口。',
     '- [资源市场](https://molio.cn/resources.html)：全部在售知识图谱资源。',
-    '- [使用指南](https://molio.cn/help.html)',
     '- [博客](https://molio.cn/blog/index.html)',
     '',
     '## 博客文章',
     '',
-    '- [Obsidian 替代方案](https://molio.cn/blog/obsidian-alternative.html)',
-    '- [Molio vs Obsidian 对比](https://molio.cn/blog/molio-vs-obsidian.html)',
-    '- [Claude Code 图形界面指南](https://molio.cn/blog/claude-code-gui-guide.html)',
-    '- [本地知识库搭建](https://molio.cn/blog/local-knowledge-base.html)',
+  );
+
+  const blogPosts = await loadBlogPosts();
+  for (const p of blogPosts) {
+    out.push(`- [${p.title}](${SITE_BASE}/blog/${p.slug}.html)`);
+  }
+
+  out.push(
     '',
     '## 关键信息',
     '',
