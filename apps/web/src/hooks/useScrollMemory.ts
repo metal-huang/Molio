@@ -15,9 +15,13 @@
  * 1. **位置在滚动时持续写入，不依赖「切走时保存」**。切走那一刻 DOM 已经是新
  *    文档，若等 cleanup 再读 `scrollTop`，读到的可能已被新文档高度 clamp 过的值。
  *
- * 2. **恢复必须等新内容落地**。切换瞬间容器里还渲染着旧文档（useKnowledge 不清空
- *    fileContent），此时 `scrollTo` 会落在一个马上要被替换掉的高度上；必须等
- *    `ready`（新文档已渲染）再落位，故用 pending 中转一次。
+ * 2. **恢复必须等新内容「上屏」，而不是等「数据到手」**。这两件事差着一次渲染：
+ *    useKnowledge 不清空 fileContent，而 MdRenderer 拿到新 content 后要经自己的
+ *    effect setState 才把新 HTML 写进 DOM。若在数据到手那帧落位，`scrollTo` 会被
+ *    容器里**上一篇**的 scrollHeight 截断（`scrollTop` 超界即被浏览器夹到上界）：
+ *    上一篇越短截得越狠，短到没有滚动条时直接截成 0 —— 表现就是「切回长文档却
+ *    回到顶部」。同理，指纹校验也必须在上屏后做（见约束 3）。故 pending 中转一次，
+ *    由调用方用「已上屏内容 === 当前内容」判定 ready。
  *
  * 3. **指纹校验也必须在内容就绪时做，不能在切换瞬间做**。切换瞬间手上那份
  *    fileContent 还是上一篇的指纹，拿它跟新文档的记录比对必然不等 —— 会把「切回
@@ -53,7 +57,10 @@ export interface UseScrollMemoryOptions {
   key: string | null;
   /** 内容指纹；null = 未知（不参与记忆）。 */
   fingerprint: string | null;
-  /** 新文档内容是否已渲染（此时落位才安全）。 */
+  /**
+   * 新文档内容是否**已经上屏**（DOM 里渲染的就是这一篇）。
+   * 注意不是「数据到手」——两者差一次渲染，早了会被上一篇的高度截断（约束 2）。
+   */
   ready: boolean;
 }
 

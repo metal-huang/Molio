@@ -199,6 +199,20 @@ export function KbMainContent({
   // CM path: text category, not too-large, and (large md OR non-markdown).
   const isCmPath = category === 'text' && !fileContent?.tooLarge && (isLargeMd || !isMarkdown);
 
+  // Memoize the rendered markdown content so MdRenderer (wrapped in memo)
+  // doesn't see a new string prop on unrelated re-renders. Preprocessing only
+  // runs for the small-.md doocs path — never for the CM source view.
+  const renderedContent = useMemo(
+    () => isSmallMd
+      ? preprocessKbMarkdown(editedContent ?? fileContent?.content ?? '', vaultId ?? undefined)
+      : '',
+    [editedContent, fileContent?.content, vaultId, isSmallMd],
+  );
+
+  // 「已上屏的内容」——MdRenderer 渲染完一篇后回传的那一份内容串。
+  // 位置记忆靠它判断容器里到底画的是哪一篇（见下 scrollMemoryReady）。
+  const [mdRenderedSource, setMdRenderedSource] = useState<string | null>(null);
+
   // ── 阅读视窗位置记忆（仅小 .md 阅读路径） ──
   // key 带 pane 前缀：同一文档同时出现在主格与副格时两者位置互不覆盖。
   // vaultId + 相对路径 = 文档身份（文件 tab 的 id 本就是 `file:${path}`，等价）。
@@ -209,9 +223,18 @@ export function KbMainContent({
   // 指纹（size:modifiedAt）：文档被 AI/外部改写过则旧位置作废，回顶部。
   const scrollMemoryFp =
     fileContent != null ? `${fileContent.size}:${fileContent.modifiedAt}` : null;
-  // 内容已就绪 = 手上这份 fileContent 正是当前选中的文件。切换期间容器里还渲染着
-  // 上一篇（useKnowledge 不清空 fileContent），此时落位会被随后的替换吃掉。
-  const scrollMemoryReady = fileContent != null && fileContent.path === selectedFile;
+  // 内容已就绪 = ①手上这份 fileContent 正是当前选中的文件，且②它真的已经画到容器里了。
+  // ②不能省：MdRenderer 把渲染结果放在自己的 state 里、在 effect 中异步写入
+  // （见 MdRenderer「Render markdown content」），所以 fileContent 到手那一帧容器里
+  // 还是上一篇——此时落位会被上一篇的 scrollHeight 截断（上一篇越短截得越狠，
+  // 无滚动条的短文档直接截到 0，表现为「切回长文档却回到顶部」）。
+  // 用「已上屏的内容串 === 当前要渲染的内容串」判定，字符串相等即同一篇，
+  // 换文档自动失效，不会误判为就绪。
+  const scrollMemoryReady =
+    fileContent != null &&
+    fileContent.path === selectedFile &&
+    mdRenderedSource != null &&
+    mdRenderedSource === renderedContent;
   const { scrollToTop } = useScrollMemory({
     containerRef: contentRef,
     key: scrollMemoryKey,
@@ -224,16 +247,6 @@ export function KbMainContent({
   const rawContent = useMemo(
     () => editedContent ?? fileContent?.content ?? '',
     [editedContent, fileContent?.content],
-  );
-
-  // Memoize the rendered markdown content so MdRenderer (wrapped in memo)
-  // doesn't see a new string prop on unrelated re-renders. Preprocessing only
-  // runs for the small-.md doocs path — never for the CM source view.
-  const renderedContent = useMemo(
-    () => isSmallMd
-      ? preprocessKbMarkdown(editedContent ?? fileContent?.content ?? '', vaultId ?? undefined)
-      : '',
-    [editedContent, fileContent?.content, vaultId, isSmallMd],
   );
 
   // Parse YAML frontmatter from the raw source for the property card.
@@ -948,7 +961,11 @@ export function KbMainContent({
           <div className="kb-content-area" ref={contentRef} onContextMenu={handleContextMenu}>
             {fileContent ? (
               // 优先使用编辑后的内容（未保存的更改），否则使用原始文件内容
-              <MdRenderer content={renderedContent} themeConfig={themeConfig} />
+              <MdRenderer
+                content={renderedContent}
+                themeConfig={themeConfig}
+                onRendered={setMdRenderedSource}
+              />
             ) : (
               <div className="kb-empty-state"><p>Loading...</p></div>
             )}
