@@ -216,20 +216,49 @@ export function KbMainContent({
     [editedContent, fileContent?.content, vaultId, isSmallMd],
   );
 
+  // Raw text used by the CM viewer — NO doocs preprocessing (those transforms
+  // mutate HTML/rendered markdown, not raw source).
+  // （位置记忆的 CM 就绪判定要拿它比对，故声明在此处、滚动记忆之前。）
+  const rawContent = useMemo(
+    () => editedContent ?? fileContent?.content ?? '',
+    [editedContent, fileContent?.content],
+  );
+
   // 「已上屏的内容」——MdRenderer 渲染完一篇后回传的那一份内容串。
   // 位置记忆靠它判断容器里到底画的是哪一篇（见下 scrollMemoryReady）。
   const [mdRenderedSource, setMdRenderedSource] = useState<string | null>(null);
 
-  // ── 阅读视窗位置记忆（仅小 .md 阅读路径） ──
+  // ── 阅读视窗位置记忆（小 .md 阅读路径 + 源码视图两条路） ──
   // key 带 pane 前缀：同一文档同时出现在主格与副格时两者位置互不覆盖。
   // vaultId + 相对路径 = 文档身份（文件 tab 的 id 本就是 `file:${path}`，等价）。
+  // 源码视图额外加 `cm:` 段：同一篇文档在阅读视图与源码视图里是两套高度模型，
+  // 位置不可互换。
+  // 不在记忆范围的：PDF / 图片（容器是 PDF 阅读器 / 图片查看器，PDF 还得连页码和缩放
+  // 一起记，另排期）、排版与编辑模式。这些路径 key 为 null，hook 整个让位。
   const isReadingPath = category === 'text' && isSmallMd && !isTypesetMode && !isEditMode && !!selectedFile;
+  const isCmMemoryPath = isCmPath && !!selectedFile;
+  const panePrefix = companion ? 'companion' : 'main';
   const scrollMemoryKey = isReadingPath
-    ? `${companion ? 'companion' : 'main'}:${vaultId ?? ''}:${selectedFile ?? ''}`
-    : null;
+    ? `${panePrefix}:${vaultId ?? ''}:${selectedFile ?? ''}`
+    : isCmMemoryPath
+      ? `${panePrefix}:cm:${vaultId ?? ''}:${selectedFile ?? ''}`
+      : null;
+
   // 指纹（size:modifiedAt）：文档被 AI/外部改写过则旧位置作废，回顶部。
   const scrollMemoryFp =
     fileContent != null ? `${fileContent.size}:${fileContent.modifiedAt}` : null;
+  // 源码视图的滚动元素由 CM 自己交出（量过一遍之后，见 KbCodeMirrorViewer.onMeasured）。
+  // 这里用 state 而不是 ref：容器到位那一刻要触发 hook 的 effect 重跑（挂监听 + 落位），
+  // 而 ref 的 current 变化不会让任何 effect 重跑。故按元素身份造一个新的 ref 对象。
+  const [cmScrollHost, setCmScrollHost] = useState<{ el: HTMLElement; source: string } | null>(null);
+  const cmContainerRef = useMemo<RefObject<HTMLElement | null>>(
+    () => ({ current: cmScrollHost?.el ?? null }),
+    [cmScrollHost],
+  );
+  const handleCmMeasured = useCallback((el: HTMLElement | null, source: string | null) => {
+    setCmScrollHost(el && source != null ? { el, source } : null);
+  }, []);
+
   // 内容已就绪 = ①手上这份 fileContent 正是当前选中的文件，且②它真的已经画到容器里了。
   // ②不能省：MdRenderer 把渲染结果放在自己的 state 里、在 effect 中异步写入
   // （见 MdRenderer「Render markdown content」），所以 fileContent 到手那一帧容器里
@@ -237,25 +266,20 @@ export function KbMainContent({
   // 无滚动条的短文档直接截到 0，表现为「切回长文档却回到顶部」）。
   // 用「已上屏的内容串 === 当前要渲染的内容串」判定，字符串相等即同一篇，
   // 换文档自动失效，不会误判为就绪。
-  const scrollMemoryReady =
-    fileContent != null &&
-    fileContent.path === selectedFile &&
-    mdRenderedSource != null &&
-    mdRenderedSource === renderedContent;
+  // 源码视图同理，判据换成「CM 量过的那份内容 === 当前内容」（CM 侧不变量见 onMeasured）。
+  const scrollMemoryReady = isCmMemoryPath
+    ? cmScrollHost != null && cmScrollHost.source === rawContent
+    : fileContent != null &&
+      fileContent.path === selectedFile &&
+      mdRenderedSource != null &&
+      mdRenderedSource === renderedContent;
   const { scrollToTop } = useScrollMemory({
-    containerRef: contentRef,
+    containerRef: isCmMemoryPath ? cmContainerRef : contentRef,
     key: scrollMemoryKey,
     fingerprint: scrollMemoryFp,
     ready: scrollMemoryReady,
     intentRef: scrollIntentRef,
   });
-
-  // Raw text used by the CM viewer — NO doocs preprocessing (those transforms
-  // mutate HTML/rendered markdown, not raw source).
-  const rawContent = useMemo(
-    () => editedContent ?? fileContent?.content ?? '',
-    [editedContent, fileContent?.content],
-  );
 
   // Parse YAML frontmatter from the raw source for the property card.
   // Only meaningful for small .md files (doocs path).
@@ -1004,6 +1028,7 @@ export function KbMainContent({
                 fileName={fileName}
                 wrap={wrap}
                 onRequestContextMenu={handleCmContextMenu}
+                onMeasured={handleCmMeasured}
               />
             </Suspense>
           </ViewerErrorBoundary>
