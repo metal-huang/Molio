@@ -193,6 +193,14 @@ jobs:
     needs: smoke-test
     strategy:
       fail-fast: false
+      # Publish one platform at a time. Every matrix entry runs
+      # `electron-builder --publish always`, which creates the GitHub release
+      # itself and rejects with "422 already_exists" if it already exists — so
+      # running the entries in parallel makes them race on the same release.
+      # v0.3.59 (run 36685374706) lost that race: the macOS job's create landed
+      # 1s after the Windows job's release went public, failing the job and
+      # skipping the OSS upload. Guarded by test/release-workflow-publish-race.
+      max-parallel: 1
       matrix:
         include:
           - os: windows-2022
