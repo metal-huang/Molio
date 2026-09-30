@@ -12,6 +12,13 @@
  * concurrency) and exits non-zero if any of them fails, so the caller aborts
  * before advertising a version whose files never landed.
  *
+ * Don't read the token expiry as the root cause, though. It is the proximate
+ * one: the same three big files moved at 16694KB/s on 09-18 (v0.3.56, 20s) and
+ * at 67-121KB/s on 09-24 (v0.3.58) with no repo change in between, i.e. the
+ * runner→Guangzhou OSS path lost ~170x and dragged the upload past the 1h
+ * token. Parallelism only helps if that throttle is per-connection, which is
+ * why the script reports aggregate vs per-stream throughput.
+ *
  * This test runs the real script against a stub `ossutil` — it drives the
  * actual control flow (concurrency, failure aggregation) instead of
  * pattern-matching script text. Skipped where bash is unavailable (Windows).
@@ -150,6 +157,28 @@ describe('scripts/upload-release-assets.sh', { skip: !bashAvailable }, () => {
     assert.match(result.stderr, /At least one asset upload failed/);
     // The failure must be reported, not swallowed by a bare `wait`.
     assert.equal(readLog(sandbox).filter((line) => line.startsWith('FAIL')).length, 1);
+  });
+
+  it('reports per-asset and aggregate throughput', () => {
+    // The runner→Guangzhou leg collapsed ~170x between v0.3.56 and v0.3.58 with
+    // no repo change, so "is the throttle per-connection or link-wide?" has to
+    // be answerable from the log alone: per-connection means the aggregate rate
+    // scales with OSS_UPLOAD_PARALLEL and fanning out is the fix; link-wide
+    // means the aggregate stays flat and parallelism buys nothing.
+    const sandbox = makeSandbox({ assets: 3 });
+    const result = runScript(sandbox);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /asset-0\.bin\s+\d+ KB\s+\d+s\s+\d+ KB\/s\s+OK/,
+      'per-asset line should carry size, elapsed and effective rate'
+    );
+    assert.match(
+      result.stdout,
+      /Total: 3 assets, \d+ KB in \d+s → aggregate \d+ KB\/s \(parallel=4, \d+ KB\/s per stream\)/,
+      'aggregate line is what distinguishes a per-connection throttle from a link-wide one'
+    );
   });
 
   it('refuses to upload when the release tag is missing', () => {
