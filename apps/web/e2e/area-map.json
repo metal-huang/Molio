@@ -116,7 +116,7 @@
     },
     "graph": {
       "paths": [
-        "apps/web/src/components/graph/*",
+        "apps/web/src/components/graph/**",
         "apps/web/src/styles/graph.css",
         "apps/daemon/src/routes/graph.ts"
       ],
@@ -125,7 +125,8 @@
         "graph-settings",
         "graph-local",
         "split-view",
-        "graph-camera"
+        "graph-camera",
+        "graph-live-refresh"
       ]
     },
     "navigation": {
@@ -312,6 +313,14 @@
     "graph-local": {
       "priority": "P1",
       "file": "graph-local.spec.ts"
+    },
+    "graph-camera": {
+      "priority": "P1",
+      "file": "graph-camera.spec.ts"
+    },
+    "graph-live-refresh": {
+      "priority": "P1",
+      "file": "graph-live-refresh.spec.ts"
     },
     "split-view": {
       "priority": "P1",
