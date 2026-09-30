@@ -71,6 +71,7 @@
       "specs": [
         "create-vault-form",
         "kb-vault-list-menu",
+        "kb-open-vault-error",
         "knowledge",
         "markdown-render",
         "kb-tree-sort-locate",
