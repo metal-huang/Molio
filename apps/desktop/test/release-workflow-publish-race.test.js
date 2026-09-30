@@ -26,9 +26,20 @@ const workflow = readFileSync(
   'utf-8'
 );
 
+/**
+ * GitHub's Windows runners check the repo out with core.autocrlf=true, so the
+ * workflow arrives as CRLF there and as LF on macOS. Splitting on '\n' then
+ * leaves a trailing '\r' on every line, which makes exact-line matching fail
+ * (the Windows job of PR #287 reported `job "build" not found in release.yml`
+ * while macOS passed on the same commit). Normalise before parsing.
+ */
+function normalize(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 /** Slice out a single top-level job block (2-space indent) from the workflow. */
-function jobBlock(name) {
-  const lines = workflow.split('\n');
+function jobBlock(name, source = workflow) {
+  const lines = normalize(source).split('\n');
   const start = lines.findIndex((line) => line === `  ${name}:`);
   assert.notEqual(start, -1, `job "${name}" not found in release.yml`);
   const rest = lines.slice(start + 1);
@@ -37,6 +48,18 @@ function jobBlock(name) {
 }
 
 describe('release workflow publish race', () => {
+  it('reads the workflow regardless of the checkout line endings', () => {
+    // This is the assertion that actually failed on the Windows runner of PR
+    // #287 (`job "build" not found in release.yml`), not the max-parallel one.
+    const crlf = workflow.replace(/\n/g, '\r\n');
+    assert.equal(
+      crlf.split('\n').findIndex((line) => line === '  build:'),
+      -1,
+      'fixture no longer reproduces the CRLF trap — it must stay unparseable raw'
+    );
+    assert.match(jobBlock('build', crlf), /^\s+max-parallel:\s*1\s*$/m);
+  });
+
   it('build matrix publishes to GitHub one platform at a time', () => {
     const build = jobBlock('build');
     assert.match(
