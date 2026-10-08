@@ -15,9 +15,11 @@ import type { InstallEvent } from '@molio/contracts';
 export function agentsRoutes(runManager: RunManager): Hono {
   const app = new Hono();
 
-  // GET / — list detected agents (re-scans each call)
-  app.get('/', (c) => {
-    const agents = runManager.detectAgents();
+  // GET / — list detected agents. Detection is async + TTL-cached + probed in
+  // parallel (see RunManager.detectAgentsAsync): the old sync re-scan froze
+  // the whole daemon event loop for seconds on every first-screen load.
+  app.get('/', async (c) => {
+    const agents = await runManager.detectAgentsAsync();
     return c.json({ agents });
   });
 
@@ -30,7 +32,9 @@ export function agentsRoutes(runManager: RunManager): Hono {
     const isAcp = def?.transport === 'acp-jsonrpc';
     const timeoutMs = isAcp ? 120_000 : 30_000;
 
-    const agents = runManager.detectAgents();
+    // Explicit connectivity test — force a fresh probe, not the TTL cache.
+    runManager.invalidateAgentCache();
+    const agents = await runManager.detectAgentsAsync();
     const agent = agents.find((a) => a.id === agentId);
     if (!agent) {
       return c.json({ ok: false, error: `Unknown agent: ${agentId}` }, 404);
@@ -41,24 +45,39 @@ export function agentsRoutes(runManager: RunManager): Hono {
 
     const startedAt = Date.now();
     try {
-      // For ACP agents (Hermes), the test verifies the **handshake only**
-      // (initialize + session/new) — not a full LLM turn. Reasons:
-      //   1. LLM latency is environment-dependent (provider, network, model)
-      //      and can exceed any reasonable idle timeout — making the test
-      //      flaky for reasons unrelated to "is hermes installed correctly".
-      //   2. The test button's job is to verify the runtime is installed and
-      //      the ACP transport works. LLM issues surface in real chat usage.
-      // The `models` event fires after session/new completes, signalling that
-      // the full handshake (MCP load, plugin discovery, provider connection)
-      // succeeded. For stdio-jsonl agents, keep sending "pong" as before.
-      const message = isAcp ? '' : 'Reply with exactly: "pong"';
+      // ACP test depth — two modes:
+      //   • Handshake-only (default; hermes): initialize + session/new. The
+      //     `models` event signals the full handshake (MCP load, plugin
+      //     discovery, provider connection) succeeded. Deliberately NOT a
+      //     real LLM turn: LLM latency is environment-dependent (provider,
+      //     network, model) and would make the test flaky for reasons
+      //     unrelated to "is the runtime installed correctly".
+      //   • Real minimal turn (acp.testWithPrompt; dsh): dsh's session/new
+      //     succeeds WITHOUT credentials (models come from local
+      //     configOptions), so a handshake-only test shows green while the
+      //     first real message fails on a missing API key — the exact trap
+      //     hit on a real machine (2026-10-04). Send the same "pong" ping
+      //     the stdio agents use and require turn_end.
+      // For stdio-jsonl agents, keep sending "pong" as before.
+      const acpPromptTest = isAcp && def?.acp?.testWithPrompt === true;
+      const message = isAcp && !acpPromptTest ? '' : 'Reply with exactly: "pong"';
       const runId = await runManager.createRun({ agentId, message });
 
       let turnCompleted = false;
       let turnError: string | null = null;
 
       const unsubscribe = runManager.onEvent(runId, (event) => {
-        if (isAcp && event.type === 'models') {
+        if (acpPromptTest) {
+          // Real-turn mode: `models` fires early (right after session/new)
+          // and must NOT count as success — only turn_end proves credentials
+          // and the LLM path actually work.
+          if (event.type === 'turn_end') {
+            turnCompleted = true;
+          } else if (event.type === 'error') {
+            turnError = event.message;
+            turnCompleted = true;
+          }
+        } else if (isAcp && event.type === 'models') {
           // ACP handshake complete: initialize + session/new succeeded,
           // plugins loaded, provider connected, models returned.
           turnCompleted = true;
@@ -118,7 +137,7 @@ export function agentsRoutes(runManager: RunManager): Hono {
   });
 
   // POST /:agentId/install — one-click install an agent via SSE
-  app.post('/:agentId/install', (c) => {
+  app.post('/:agentId/install', async (c) => {
     const agentId = c.req.param('agentId');
     const def = getAgentDef(agentId);
 
@@ -129,8 +148,9 @@ export function agentsRoutes(runManager: RunManager): Hono {
       return c.json({ error: `Agent ${agentId} does not support auto-install` }, 400);
     }
 
-    // Check if already installed
-    const agents = runManager.detectAgents();
+    // Check if already installed — fresh probe, not the TTL cache.
+    runManager.invalidateAgentCache();
+    const agents = await runManager.detectAgentsAsync();
     const agent = agents.find((a) => a.id === agentId);
     if (agent?.available) {
       return c.json({ error: `${agentId} is already installed` }, 400);
@@ -145,13 +165,20 @@ export function agentsRoutes(runManager: RunManager): Hono {
       // Abort install when the client disconnects
       s.onAbort(() => ac.abort());
 
-      await installAgent({
-        agentId,
-        signal: ac.signal,
-        onEvent: (event: InstallEvent) => {
-          s.write(`data: ${JSON.stringify(event)}\n\n`);
-        },
-      });
+      try {
+        await installAgent({
+          agentId,
+          signal: ac.signal,
+          onEvent: (event: InstallEvent) => {
+            s.write(`data: ${JSON.stringify(event)}\n\n`);
+          },
+        });
+      } finally {
+        // Success or failure: the on-disk binary situation may have changed
+        // (installed / partially installed) — never serve a stale cache here,
+        // or the UI would keep showing "not installed" for up to the TTL.
+        runManager.invalidateAgentCache();
+      }
     });
   });
 

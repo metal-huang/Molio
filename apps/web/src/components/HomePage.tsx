@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState, lazy, Suspense } from 'react';
 import { ChatComposer, buildAttachmentPrefix } from './ChatComposer';
 import type { PastedImage } from './ChatComposer';
 import { UserMessage } from './UserMessage';
@@ -12,8 +12,12 @@ import { RunStatusBar } from './RunStatusBar';
 import { ActivityTree } from './ActivityTree';
 import type { ActivityInfo } from '@molio/contracts';
 import { PanelIcon } from './icons';
-import { SessionOutputPanel } from './SessionOutputPanel';
 import { NoRuntimeCard } from './NoRuntimeCard';
+
+// 会话产出面板只在 dock 展开时渲染，却把整条 doocs-md/marked/highlight.js
+// 依赖链拖进首屏 chunk —— 懒加载（启动性能优化）。
+const SessionOutputPanel = lazy(() =>
+  import('./SessionOutputPanel').then((m) => ({ default: m.SessionOutputPanel })));
 
 const STORAGE_KEY_DOCK_OPEN = 'molio.home-dock-open';
 function readDockOpen(): boolean {
@@ -179,15 +183,6 @@ export function HomePage({
             >
               <PanelIcon size={16} />
             </button>
-            {selectedAgentName && (
-              <span className="home-active-agent">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                  <circle cx="12" cy="7" r="4" />
-                </svg>
-                {selectedAgentName}
-              </span>
-            )}
           </div>
         </div>
 
@@ -265,7 +260,11 @@ export function HomePage({
         </div>
         </div>
 
-      {dockOpen && <SessionOutputPanel messages={messages} />}
+      {dockOpen && (
+        <Suspense fallback={null}>
+          <SessionOutputPanel messages={messages} />
+        </Suspense>
+      )}
       </div>
     );
   }

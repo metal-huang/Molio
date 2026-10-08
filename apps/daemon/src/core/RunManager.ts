@@ -8,9 +8,16 @@ import type {
 } from '@molio/contracts';
 import { getAgentDef, listAgentDefs } from './runtimes/registry.js';
 import { TranscriptWatcher, claudeProjectDir } from './activity/transcript-watcher.js';
-import { resolveAgentBinary, probeVersion, needsShellOnWindows } from './runtimes/launch.js';
+import {
+  resolveAgentBinary, probeVersion, needsShellOnWindows,
+  resolveAgentBinaryAsync, probeVersionAsync,
+  type ResolveResult, type ProbeResult, type ResolveOptions,
+} from './runtimes/launch.js';
 import { buildSpawnEnv, createStderrDecoder } from './runtimes/env.js';
 import { classifyStderrChunk } from './runtimes/stderr.js';
+import { agentErrorHint } from './runtimes/error-hints.js';
+import { killAgentProcessTree } from './runtimes/kill-tree.js';
+import { resolveClaudeModels } from './runtimes/claude-models.js';
 import { createClaudeStreamHandler } from './streams/claude-stream.js';
 import { createCodexStreamHandler } from './streams/codex-stream.js';
 import { createJsonEventStreamHandler } from './streams/json-event-stream.js';
@@ -67,6 +74,58 @@ function mapAcpUsage(u: any): import('@molio/contracts').UsageInfo {
 }
 
 /**
+ * Parse the dsh-style `configOptions` shape returned by session/new into a
+ * flat model list. Returns null when the session carries no model select
+ * (hermes uses session.models instead).
+ *
+ * dsh's model configOption is a grouped select; each leaf option's `value`
+ * is a JSON-encoded [provider, model] tuple string, e.g.
+ * '["deepseek-official","deepseek-v4-pro"]'. The tuple's model slug becomes
+ * the entry id (matching dshAgentDef.fallbackModels ids); `name` is the
+ * display label. `value` is kept verbatim — session/set_config_option wants
+ * the exact tuple string back.
+ */
+function parseConfigOptionsModels(session: any): {
+  entries: { id: string; label: string; value: string }[];
+  currentSlug?: string;
+} | null {
+  const configOptions: any = session?.configOptions;
+  if (!Array.isArray(configOptions)) return null;
+  const modelOption = configOptions.find(
+    (o: any) => o && (o.category === 'model' || o.id === 'model') && o.type === 'select',
+  );
+  if (!modelOption || !Array.isArray(modelOption.options)) return null;
+
+  // Flatten grouped options ({group, name, options:[…]}) and bare leaves.
+  const leaves: any[] = [];
+  for (const opt of modelOption.options) {
+    if (Array.isArray(opt?.options)) leaves.push(...opt.options);
+    else if (opt && typeof opt.value === 'string') leaves.push(opt);
+  }
+
+  const slugOf = (value: string): string | null => {
+    try {
+      const tuple = JSON.parse(value);
+      if (Array.isArray(tuple) && typeof tuple[1] === 'string') return tuple[1];
+    } catch { /* not a tuple — fall back to the display name below */ }
+    return null;
+  };
+
+  const entries: { id: string; label: string; value: string }[] = [];
+  for (const leaf of leaves) {
+    if (typeof leaf?.value !== 'string') continue;
+    const label = typeof leaf.name === 'string' && leaf.name ? leaf.name : leaf.value;
+    entries.push({ id: slugOf(leaf.value) ?? label, label, value: leaf.value });
+  }
+  if (entries.length === 0) return null;
+
+  const currentSlug = typeof modelOption.currentValue === 'string'
+    ? (slugOf(modelOption.currentValue) ?? undefined)
+    : undefined;
+  return { entries, currentSlug };
+}
+
+/**
  * Build a system-hint prefix that tells the agent CLI which runtime
  * it is running as inside Molio.  Prepended to the first user message.
  */
@@ -94,6 +153,17 @@ export interface CreateRunOptions {
   onTurnComplete?: (text: string, tools: PersistedToolEvent[], runId: string) => void;
 }
 
+/** Injectable hooks for agent detection — tests override these to avoid
+ * spawning real CLI processes; production defaults to the launch.ts impls. */
+export interface AgentDetectDeps {
+  resolve?: (def: RuntimeAgentDef, options?: ResolveOptions) => Promise<ResolveResult>;
+  probe?: (bin: string, args: string[], timeoutMs?: number) => Promise<ProbeResult>;
+  now?: () => number;
+}
+
+/** Default TTL for the agent-detection cache. Override via env (0 disables). */
+const DEFAULT_AGENT_CACHE_TTL_MS = 30_000;
+
 export class RunManager {
   private runs = new Map<string, RunState>();
   private runsLogDir: string;
@@ -101,10 +171,22 @@ export class RunManager {
   // dbgLog channel (stdout + debug file, NOT stderr) so it never reads as ERROR.
   private readonly noSubscriberWarn = new ThrottledWarn({ sink: (m) => dbgLog(m) });
 
-  constructor() {
+  private readonly detectDeps: AgentDetectDeps;
+  /** TTL cache for detectAgentsAsync — probing spawns CLI processes (cold
+   * Claude start = 1-3s), so back-to-back GET /api/agents must not re-probe. */
+  private agentCache: { at: number; agents: AgentInfo[] } | null = null;
+  /** In-flight dedup — concurrent callers share one probe round. */
+  private agentProbeInFlight: Promise<AgentInfo[]> | null = null;
+
+  constructor(detectDeps: AgentDetectDeps = {}) {
     this.runsLogDir = path.join(os.homedir(), '.molio', 'runs');
+    this.detectDeps = detectDeps;
   }
 
+  /**
+   * @deprecated Sync variant kept for internal/legacy callers — it blocks the
+   * event loop while spawning `where`/CLI probes. Use {@link detectAgentsAsync}.
+   */
   detectAgents(): AgentInfo[] {
     const config = loadConfig();
     return listAgentDefs().map((def) => {
@@ -129,19 +211,112 @@ export class RunManager {
         }
       }
 
-      return {
-        id: def.id,
-        name: def.name,
-        available,
-        binary,
-        source: result.source,
-        version,
-        probeError: probeError,
-        models: def.fallbackModels,
-        installUrl: def.installUrl,
-        installable: !!def.install,
-      };
+      return this.toAgentInfo(def, result, { version, error: probeError ?? undefined }, configuredEnv);
     });
+  }
+
+  /**
+   * Non-blocking agent detection with a short TTL cache. All agents are
+   * resolved + version-probed **in parallel** via async spawns, so the total
+   * cost is ~max(single probe) instead of sum, and the daemon event loop stays
+   * responsive (other first-screen requests aren't queued behind it).
+   *
+   * Cache invalidation: TTL (default 30s, `MOLIO_AGENT_CACHE_TTL_MS`, 0 =
+   * always re-probe) + explicit {@link invalidateAgentCache} from the install
+   * and config-write routes so a freshly installed/configured agent shows up
+   * immediately.
+   */
+  async detectAgentsAsync(): Promise<AgentInfo[]> {
+    const now = (this.detectDeps.now ?? Date.now)();
+    const ttl = this.agentCacheTtlMs();
+    if (ttl > 0 && this.agentCache && now - this.agentCache.at < ttl) {
+      return this.agentCache.agents;
+    }
+    if (this.agentProbeInFlight) return this.agentProbeInFlight;
+
+    const promise = this.runAgentDetection().finally(() => {
+      this.agentProbeInFlight = null;
+    });
+    this.agentProbeInFlight = promise;
+    return promise;
+  }
+
+  /** Drop the detection cache — next detectAgentsAsync re-probes. */
+  invalidateAgentCache(): void {
+    this.agentCache = null;
+  }
+
+  private agentCacheTtlMs(): number {
+    const raw = process.env['MOLIO_AGENT_CACHE_TTL_MS'];
+    if (raw === undefined || raw.trim() === '') return DEFAULT_AGENT_CACHE_TTL_MS;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_AGENT_CACHE_TTL_MS;
+  }
+
+  private async runAgentDetection(): Promise<AgentInfo[]> {
+    const resolve = this.detectDeps.resolve ?? resolveAgentBinaryAsync;
+    const probe = this.detectDeps.probe ?? probeVersionAsync;
+    const config = loadConfig();
+    const agents = await Promise.all(
+      listAgentDefs().map(async (def) => {
+        const agentConfig = config.agents[def.id] || {};
+        const configuredEnv = agentConfig.env || {};
+        const result = await resolve(def, { configuredEnv });
+        let probeResult: ProbeResult = { version: null };
+        if (result.binary) {
+          probeResult = await probe(result.binary, def.versionArgs);
+        }
+        return this.toAgentInfo(def, result, probeResult, configuredEnv);
+      }),
+    );
+    this.agentCache = { at: (this.detectDeps.now ?? Date.now)(), agents };
+    return agents;
+  }
+
+  /** Shared sync/async AgentInfo assembly — availability semantics live here:
+   * a binary that exists on disk but fails its version probe is NOT usable
+   * (stale/broken installs must not surface as available). */
+  private toAgentInfo(
+    def: RuntimeAgentDef,
+    result: ResolveResult,
+    probeResult: ProbeResult,
+    configuredEnv: Record<string, string> = {},
+  ): AgentInfo {
+    let available = result.binary !== null;
+    if (result.binary && !probeResult.version && probeResult.error) {
+      available = false;
+    }
+
+    // claude 特有：从 ~/.claude/settings.json（CC Switch 等写入）解析真实
+    // 模型视图——静态 fallbackModels 与第三方端点的实际接入对不上。
+    // 合并顺序 settings.json → Molio agent env → 进程 env，与 spawn 一致。
+    let models = def.fallbackModels;
+    let defaultModel: AgentInfo['defaultModel'];
+    if (def.id === 'claude') {
+      const mergedEnv: Record<string, string> = { ...configuredEnv };
+      for (const [k, v] of Object.entries(process.env)) {
+        if (typeof v === 'string') mergedEnv[k] = v;
+      }
+      const resolved = resolveClaudeModels({ env: mergedEnv });
+      if (resolved) {
+        models = resolved.models;
+        defaultModel = resolved.defaultModel;
+      }
+    }
+
+    return {
+      id: def.id,
+      name: def.name,
+      available,
+      binary: result.binary,
+      source: result.source,
+      version: probeResult.version,
+      probeError: probeResult.error ?? null,
+      models,
+      defaultModel,
+      installUrl: def.installUrl,
+      installable: !!def.install,
+    };
   }
 
   listAgents(): AgentInfo[] {
@@ -301,13 +476,16 @@ export class RunManager {
         })
       : args;
 
-    // ── Just-in-time [acp] extra auto-repair (Hermes) ──────────────────────
-    // Before spawning an ACP agent, probe `hermes-acp --check`. If the venv is
-    // missing the [acp] extra (agent-client-protocol), auto-install it into
-    // the venv so the user doesn't have to drop into a terminal. Other missing
-    // modules surface as an error with a copyable manual-fix command. See
+    // ── Just-in-time [acp] extra auto-repair (Hermes only) ─────────────────
+    // Before spawning, probe `hermes-acp --check`. If the venv is missing the
+    // [acp] extra (agent-client-protocol), auto-install it into the venv so
+    // the user doesn't have to drop into a terminal. Other missing modules
+    // surface as an error with a copyable manual-fix command. See
     // runtimes/hermes.ts:ensureAcpExtra for the full state machine.
-    if (def.transport === 'acp-jsonrpc') {
+    // Gated on def.acp.preflightRepair: the probe assumes `--check` is a valid
+    // invocation, which is hermes-specific — dsh rejects unknown flags with
+    // exit 1, so running the probe against it would fail every run pre-spawn.
+    if (def.transport === 'acp-jsonrpc' && def.acp?.preflightRepair) {
       try {
         await ensureAcpExtra(result.binary, {
           onProgress: (message) => {
@@ -346,12 +524,12 @@ export class RunManager {
     const stderrDecoder = createStderrDecoder();
 
     if (def.transport === 'acp-jsonrpc') {
-      // ── ACP path (Hermes) — long-running JSON-RPC server over stdio ──
+      // ── ACP path (Hermes, DeepSeek Harness) — long-running JSON-RPC server over stdio ──
       // No stdin prompt, no selectParser. Drive initialize/session/new/session/prompt via AcpTransport.
       // ACP schema requires cwd to be absolute; resolve against process.cwd()
       // so a relative MOLIO_CWD env var doesn't silently break session/new.
       const acpCwd = path.resolve(opts.cwd || agentConfig.env?.['MOLIO_CWD'] || process.cwd());
-      this.initAcp(run, def, child, acpCwd)
+      this.initAcp(run, def, child, acpCwd, opts.model)
         .then(() => {
           // After init, drive the first session/prompt with the user's message.
           // Subsequent turns go through sendMessage.
@@ -386,7 +564,7 @@ export class RunManager {
         const wasCancelled = run.acp
           ? run.acp.transport.isCancelled(run.acp.sessionId)
           : false;
-        run.acp?.transport.rejectAll(new Error(`hermes-acp process exited (code=${code})`));
+        run.acp?.transport.rejectAll(new Error(`${def.bin} process exited (code=${code})`));
         // ACP runs are long-running — the process exiting is never a "clean
         // success" on its own. Decide terminal status by what triggered it:
         //   - cancelRun marked the session → 'canceled'
@@ -503,12 +681,17 @@ export class RunManager {
    * Fire-and-forget from createRun so runId is returned immediately; failures
    * emit error events and finish the run. On success, sets run.acp and pushes
    * models to the frontend.
+   *
+   * `model` is the user-selected model id (undefined/'default' = agent's own
+   * default). dsh applies it post-session/new via session/set_config_option;
+   * hermes has no model-set RPC and ignores it.
    */
   private async initAcp(
     run: RunState,
     def: RuntimeAgentDef,
     child: ChildProcess,
     cwd: string,
+    model?: string | null,
   ): Promise<void> {
     const transport = new AcpTransport(
       (json) => {
@@ -516,17 +699,10 @@ export class RunManager {
       },
       (ev) => this.emitEvent(run, ev),
       // On idle/absolute timeout the transport rejects the pending request,
-      // then calls this to kill the child so a hung hermes-acp doesn't leak
-      // until the 30-min TTL. SIGTERM → 5s → SIGKILL matches cancelRun's pattern.
-      () => {
-        if (child.killed) return;
-        try { child.kill('SIGTERM'); } catch { /* already dead */ }
-        setTimeout(() => {
-          if (!child.killed) {
-            try { child.kill('SIGKILL'); } catch { /* ignore */ }
-          }
-        }, 5000);
-      },
+      // then calls this to kill the child so a hung hermes-acp/dsh doesn't leak
+      // until the 30-min TTL. Tree-kills on Windows (the cmd.exe wrapper's node
+      // grandchild would otherwise be orphaned); SIGTERM→SIGKILL on POSIX.
+      () => killAgentProcessTree(child),
     );
 
     // Assign to run.acp early (sessionId filled in after session/new) so the
@@ -568,7 +744,11 @@ export class RunManager {
     }
     run.acp.sessionId = sessionId;
 
-    // Capture available models for the frontend
+    // Capture available models for the frontend. Two session/new shapes exist:
+    //  - hermes: session.models.availableModels [{modelId, name}] + currentModelId
+    //  - dsh: session.configOptions — a grouped select whose option `value` is
+    //    a JSON-encoded [provider, model] tuple; switching goes through
+    //    session/set_config_option (no session/set_model support).
     const models: any = session?.models?.availableModels;
     if (Array.isArray(models)) {
       run.acpModels = models.map((m: any) => ({
@@ -582,6 +762,35 @@ export class RunManager {
           ? session.models.currentModelId
           : undefined,
       });
+    } else {
+      const dshModels = parseConfigOptionsModels(session);
+      if (dshModels) {
+        let currentModelId = dshModels.currentSlug;
+        if (model && model !== 'default') {
+          const match = dshModels.entries.find((m) => m.id === model || m.label === model);
+          if (!match) {
+            // User-preference rule: never silently fall back to another model.
+            // Surface the mismatch and fail the run so the user can pick a
+            // valid model.
+            throw new Error(
+              `Model "${model}" is not available in ${def.name}. Available: `
+              + dshModels.entries.map((m) => m.id).join(', '),
+            );
+          }
+          await transport.request(
+            'session/set_config_option',
+            { sessionId, configId: 'model', value: match.value },
+            { idleTimeoutMs: idleTimeout, absoluteTimeoutMs: absoluteTimeout },
+          );
+          currentModelId = match.id;
+        }
+        run.acpModels = dshModels.entries.map((m) => ({ modelId: m.id, name: m.label }));
+        this.emitEvent(run, {
+          type: 'models',
+          models: dshModels.entries.map((m) => ({ id: m.id, label: m.label })),
+          currentModelId,
+        });
+      }
     }
 
     // Session is live — stdin stays open for multi-turn follow-ups via
@@ -604,11 +813,26 @@ export class RunManager {
    */
   private handleAcpStderr(run: RunState, text: string): void {
     if (!text) return;
+    const def = getAgentDef(run.agentId);
     const lines = text.split(/\r?\n/);
     for (const raw of lines) {
       const line = raw.trim();
       if (!line) continue;
       run.lastStderrLine = line;
+      if (def?.id === 'dsh') {
+        // dsh (Node) writes non-fatal diagnostics to stderr: "dsh: warning: N
+        // entry did not activate", plugin-activation ValidationError detail
+        // lines, Node ExperimentalWarnings, fetch notices. Escalating those to
+        // `error` events would flip the frontend to streaming:false and
+        // swallow the reply stream, so only explicit error headers surface —
+        // everything else stays a log-only `raw` event. ACP-level failures
+        // reach the UI through JSON-RPC error responses, not stderr.
+        const isExplicitError = /^dsh:\s*error\b/i.test(line) || /^Error:/i.test(line);
+        this.emitEvent(run, isExplicitError
+          ? { type: 'error', message: line }
+          : { type: 'raw', line });
+        continue;
+      }
       // Hermes log format: YYYY-MM-DD HH:MM:SS [LEVEL] logger: message
       const isInfoLevel = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[(INFO|WARNING|DEBUG)\]/;
       if (isInfoLevel.test(line)) {
@@ -730,7 +954,14 @@ export class RunManager {
           // Also include the binary path so users can spot "wrong install" cases.
           const lastStderr = run.lastStderrLine ? ` (last stderr: "${run.lastStderrLine}")` : '';
           const binarySuffix = run.binaryPath ? ` [binary: ${run.binaryPath}]` : '';
-          this.emitEvent(run, { type: 'error', message: `prompt failed: ${err.message}${lastStderr}${binarySuffix}` });
+          // Agents report config problems in their own vocabulary (e.g. dsh's
+          // "store DEEPSEEK_API_KEY through the credentials service" — a
+          // concept Molio's UI doesn't have). Append a Molio-actionable hint
+          // when the message matches a known pattern; original text stays for
+          // diagnostics.
+          const hint = agentErrorHint(run.agentId, err.message);
+          const hintSuffix = hint ? ` | Molio 提示：${hint}` : '';
+          this.emitEvent(run, { type: 'error', message: `prompt failed: ${err.message}${lastStderr}${binarySuffix}${hintSuffix}` });
           // Without finishRun here, the run stays in 'running' until the 30-min
           // TTL cleanup fires — the UI shows a spinner forever after a prompt failure.
           this.finishRun(run, 'failed', 1, null);
@@ -811,26 +1042,14 @@ export class RunManager {
       const cancelTimeout = def.acp?.cancelTimeoutMs ?? 5000;
       // Cancel is a short ack — strict absolute deadline, no idle timer.
       transport.request('session/cancel', { sessionId }, { absoluteTimeoutMs: cancelTimeout })
-        .catch(() => { /* cancel itself failed — fall through to SIGTERM */ })
-        .finally(() => {
-          if (run.child && !run.child.killed) {
-            run.child.kill('SIGTERM');
-            setTimeout(() => {
-              if (run.child && !run.child.killed) run.child.kill('SIGKILL');
-            }, 5000);
-          }
-        });
+        .catch(() => { /* cancel itself failed — fall through to the kill */ })
+        .finally(() => killAgentProcessTree(run.child));
       return;
     }
 
-    if (run.child && !run.child.killed) {
-      run.child.kill('SIGTERM');
-      setTimeout(() => {
-        if (run.child && !run.child.killed) {
-          run.child.kill('SIGKILL');
-        }
-      }, 5000);
-    }
+    // Tree-kill on Windows (reap the cmd.exe wrapper's agent grandchild);
+    // SIGTERM→SIGKILL on POSIX. See runtimes/kill-tree.ts.
+    killAgentProcessTree(run.child);
     if (run.stdinOpen && run.child?.stdin?.writable) {
       try { run.child.stdin.end(); } catch { /* ignore */ }
       run.stdinOpen = false;

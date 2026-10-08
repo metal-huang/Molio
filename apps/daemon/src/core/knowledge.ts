@@ -51,35 +51,48 @@ export function scanTree(vaultPath: string, relBase = '', opts: ScanOpts = {}): 
     stopped: false,
     maxDirEntries: opts.maxDirEntries ?? MAX_DIR_ENTRIES,
     maxTotal: opts.maxTotal ?? MAX_TOTAL,
-  });
+  }).nodes;
 }
 
-function scanTreeInner(vaultPath: string, relBase: string, ctx: ScanCtx): TreeNode[] {
-  if (ctx.stopped) return [];
+interface ScanResult {
+  nodes: TreeNode[];
+  /** This directory itself was pruned (over the per-dir entry cap). */
+  selfPruned?: true;
+}
+
+function scanTreeInner(vaultPath: string, relBase: string, ctx: ScanCtx): ScanResult {
+  if (ctx.stopped) return { nodes: [] };
   const absDir = relBase ? path.join(vaultPath, relBase) : vaultPath;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(absDir, { withFileTypes: true });
   } catch {
-    return [];
+    return { nodes: [] };
   }
-  const nodes: TreeNode[] = [];
 
   // Backstop: prune oversized subtrees instead of stat-ing thousands of files.
-  // Return empty children — the parent call still pushes a directory node (now
-  // empty), which surfaces the dir as pruned without stat-ing its contents.
+  // Return empty children flagged selfPruned — the parent still pushes the
+  // directory node (now empty + pruned) so the UI can show a "too many files"
+  // hint instead of a silent blank that reads as "the click did nothing".
   if (entries.length > ctx.maxDirEntries) {
     warnOversizedDir('scanTree', absDir, entries.length, ctx.maxDirEntries);
-    return [];
+    return { nodes: [], selfPruned: true };
   }
+  const nodes: TreeNode[] = [];
 
   for (const entry of entries) {
     if (isPrunedDirName(entry.name)) continue;
     const relPath = relBase ? `${relBase}/${entry.name}` : entry.name;
 
     if (entry.isDirectory()) {
-      const children = scanTreeInner(vaultPath, relPath, ctx);
-      nodes.push({ name: entry.name, path: relPath, type: 'directory', children });
+      const child = scanTreeInner(vaultPath, relPath, ctx);
+      nodes.push({
+        name: entry.name,
+        path: relPath,
+        type: 'directory',
+        children: child.nodes,
+        pruned: child.selfPruned || undefined,
+      });
       if (ctx.stopped) break;
     } else if (entry.isFile() && isSupportedFile(entry.name)) {
       ctx.visited++;
@@ -111,7 +124,7 @@ function scanTreeInner(vaultPath: string, relBase: string, ctx: ScanCtx): TreeNo
     return a.name.localeCompare(b.name);
   });
 
-  return nodes;
+  return { nodes };
 }
 
 /**
@@ -223,10 +236,49 @@ function readSample(filePath: string, n: number): Buffer {
 }
 
 /**
+ * Candidate relPaths to try for a requested file, in priority order:
+ *   1. the path as requested;
+ *   2. with Windows separators normalized to '/' — AI citations of Windows
+ *      paths often keep backslashes ('work\raw\a.txt') on any host OS;
+ *   3. with a leading vault-directory-name segment stripped — truncated
+ *      absolute citations arrive as '<vaultDir>/raw/a.txt' (2026-09 support
+ *      incident: '01M10…-vault/raw/…' references were unresolvable forever
+ *      even though the file sat at 'raw/…' inside the vault).
+ */
+function citationCandidates(vaultPath: string, relPath: string): string[] {
+  const out = new Set<string>([relPath]);
+  const normalized = relPath.replace(/\\/g, '/');
+  out.add(normalized);
+  const vaultDirName = path.basename(vaultPath);
+  const ci = process.platform === 'win32';
+  const eq = (a: string, b: string): boolean =>
+    ci ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const segs = normalized.split('/');
+  for (let i = segs.length - 2; i >= 0; i--) {
+    const seg = segs[i];
+    if (seg && eq(seg, vaultDirName)) {
+      out.add(segs.slice(i + 1).join('/'));
+      break;
+    }
+  }
+  return [...out];
+}
+
+/**
  * Try multiple fallback strategies to find a file that may be missing
  * an extension, in a subdirectory, or have case mismatches.
  */
 function resolveWithFallbacks(vaultPath: string, relPath: string): string {
+  for (const candidate of citationCandidates(vaultPath, relPath)) {
+    const hit = tryResolveCandidate(vaultPath, candidate);
+    if (hit) return hit;
+  }
+  // Return the original resolved path if all fallbacks fail
+  return resolveFilePath(vaultPath, relPath);
+}
+
+/** Run the per-candidate fallback strategies (prefixes, .md, case, stem). */
+function tryResolveCandidate(vaultPath: string, relPath: string): string | null {
   const ext = path.extname(relPath).toLowerCase();
   const hasExt = !!ext;
 
@@ -305,8 +357,8 @@ function resolveWithFallbacks(vaultPath: string, relPath: string): string {
     if (found) return found;
   }
 
-  // Return the original resolved path if all fallbacks fail
-  return resolveFilePath(vaultPath, relPath);
+  // All strategies missed for this candidate
+  return null;
 }
 
 /**
@@ -598,6 +650,84 @@ export function isInsideProtected(relPath: string): boolean {
   return PROTECTED_DIRS.some(
     d => relPath === d || relPath.startsWith(d + '/')
   );
+}
+
+// ─── Vault root path validation ───
+
+/** Why validateVaultPath rejected a candidate vault root. */
+export interface VaultPathIssue {
+  code: 'VAULT_PATH_DOT_DIR' | 'VAULT_PATH_NESTED' | 'VAULT_PATH_EXISTS';
+  message: string;
+}
+
+/** Minimal vault snapshot validateVaultPath needs — satisfied by db Vault rows. */
+export interface ExistingVaultRef {
+  id: string;
+  name: string;
+  path: string;
+}
+
+/**
+ * Validate a candidate vault ROOT path before registration. Returns the first
+ * issue found, or null when the path is acceptable.
+ *
+ * Regression guard (2026-09 support incident): a user registered
+ * `<vault>\.claude` as a standalone vault — Windows Explorer does NOT hide
+ * dot-prefixed dirs — and the overlapping roots made stored references resolve
+ * against the wrong root, surfacing as "无法打开文件" across four vaults.
+ * Rejects:
+ *   - any path segment starting with '.' — dot-dirs are tool-internal
+ *     (.claude / .molio / .git / …), never knowledge roots;
+ *   - exact duplicates and nesting in EITHER direction (candidate inside an
+ *     existing vault, or an existing vault inside the candidate) — the same
+ *     relative path must never mean two different disk locations.
+ *
+ * Pure function over paths: existing vaults are passed in, so tests need no
+ * database. Comparison is case-insensitive where the filesystem is
+ * (Windows), exact elsewhere.
+ */
+export function validateVaultPath(
+  vaultPath: string,
+  existingVaults: ExistingVaultRef[] = [],
+  opts: { excludeVaultId?: string } = {},
+): VaultPathIssue | null {
+  const resolved = path.resolve(vaultPath);
+  const ci = process.platform === 'win32';
+  const norm = (p: string): string => (ci ? p.toLowerCase() : p);
+
+  // Dot-segment check — split on both separators so Windows-style input
+  // ('D:\AI\Molio\work\.claude') segments correctly on any platform.
+  const segments = resolved.split(/[\\/]+/).filter(Boolean);
+  const dotSegment = segments.find((s) => s.startsWith('.'));
+  if (dotSegment) {
+    return {
+      code: 'VAULT_PATH_DOT_DIR',
+      message:
+        `不能把「${dotSegment}」设为知识库文件夹：以点开头的文件夹（如 .claude、.molio）` +
+        '是软件或工具的内部目录，请选择存放资料的业务文件夹',
+    };
+  }
+
+  const cand = norm(resolved);
+  const candPrefix = cand.endsWith(path.sep) ? cand : cand + path.sep;
+  for (const v of existingVaults) {
+    if (opts.excludeVaultId && v.id === opts.excludeVaultId) continue;
+    const existing = norm(path.resolve(v.path));
+    if (cand === existing) {
+      return {
+        code: 'VAULT_PATH_EXISTS',
+        message: `该目录已被知识库「${v.name}」使用，请选择其他文件夹`,
+      };
+    }
+    const existingPrefix = existing.endsWith(path.sep) ? existing : existing + path.sep;
+    if (cand.startsWith(existingPrefix) || existing.startsWith(candPrefix)) {
+      return {
+        code: 'VAULT_PATH_NESTED',
+        message: `与知识库「${v.name}」的文件夹互相嵌套，请为知识库选择独立的文件夹`,
+      };
+    }
+  }
+  return null;
 }
 
 export function isTextFile(filePath: string): boolean {

@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { FilePicker } from './FilePicker';
 import { SkillPalette } from './SkillPalette';
 import { ConversationHistoryMenu } from './ConversationHistoryMenu';
+import { RuntimeModelPill } from './RuntimeModelPill';
 import { expandComposerMessage, flattenTreePaths, type ExpandSkillEntry } from './composerExpand';
 
 export interface FileRef {
@@ -317,6 +318,9 @@ export function ChatComposer({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // 中文输入法组词中按 Enter 确认候选词（isComposing / keyCode 229）——
+    // 不能当成「发送」，否则带拼音半成的消息会被直接发出
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       // Don't send if FilePicker or SkillPalette overlay is open — they handle Enter
@@ -566,9 +570,46 @@ export function ChatComposer({
         </div>
 
         <div className="composer-row">
+          {/* 两段式布局（对齐 workbuddy/Codex 惯例）：左簇 = 输入辅助（添加/历史/帮助），
+              右簇 = 这条消息的配置与动作（模型 pill 紧贴发送键——发送前最后确认）。
+              运行中隐藏左簇（附件/历史无意义），pill 常驻（可为排队消息挑模型）。 */}
+          {!isRunning && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                className="composer-file-input"
+                data-testid="composer-file-input"
+                onChange={handleFileInputChange}
+              />
+              {/* 图片上传：Molio 唯一的真实聊天附件（文件上下文走 @ 引用体系，
+                  不做 workbuddy/codex 式 + 聚合菜单——单项菜单是反模式）。
+                  图标诚实表达唯一功能；未来出现第二种附件类型再升级为 + 菜单。 */}
+              <button
+                type="button"
+                className="composer-upload-btn"
+                data-testid="composer-upload-btn"
+                onClick={openFilePicker}
+                disabled={disabled}
+                title={t('composer.uploadImage')}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <path d="M21 15l-5-5-7 7" />
+                </svg>
+              </button>
+              {onOpenConversation && (
+                <ConversationHistoryMenu onSelect={onOpenConversation} onDeleteConversations={onDeleteConversations} />
+              )}
+            </>
+          )}
+          <span className="composer-spacer" />
+          <RuntimeModelPill />
           {isRunning ? (
             <>
-              <span className="composer-spacer" />
               {canSend && (
                 <button
                   type="button"
@@ -597,59 +638,21 @@ export function ChatComposer({
               </button>
             </>
           ) : (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/gif,image/webp"
-                multiple
-                className="composer-file-input"
-                data-testid="composer-file-input"
-                onChange={handleFileInputChange}
-              />
-              <button
-                type="button"
-                className="composer-upload-btn"
-                data-testid="composer-upload-btn"
-                onClick={openFilePicker}
-                disabled={disabled}
-                title={t('composer.uploadImage')}
-              >
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <path d="M21 15l-5-5-7 7" />
-                </svg>
-              </button>
-              {onOpenConversation && (
-                <ConversationHistoryMenu onSelect={onOpenConversation} onDeleteConversations={onDeleteConversations} />
-              )}
-              <span className="composer-spacer" />
-              <button
-                type="button"
-                data-testid="composer-send"
-                className="composer-send"
-                disabled={!canSend}
-                onClick={handleSend}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-                {t('composer.send')}
-              </button>
-            </>
+            <button
+              type="button"
+              data-testid="composer-send"
+              className="composer-send"
+              disabled={!canSend}
+              onClick={handleSend}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+              {t('composer.send')}
+            </button>
           )}
         </div>
-      </div>
-      <div className="composer-hint">
-        <span className="hint-item"><kbd>/</kbd> <span className="hint-desc">{t('composer.hintSkill')}</span></span>
-        <span className="hint-sep">·</span>
-        <span className="hint-item"><kbd>@</kbd> <span className="hint-desc">{t('composer.hintFileRef')}</span></span>
-        <span className="hint-sep">·</span>
-        <span className="hint-item"><kbd>Enter</kbd> <span className="hint-desc">{t('composer.hintSend')}</span></span>
-        <span className="hint-sep">·</span>
-        <span className="hint-item"><kbd>Shift</kbd><span className="hint-kbd-plus">+</span><kbd>Enter</kbd> <span className="hint-desc">{t('composer.hintNewline')}</span></span>
       </div>
     </div>
   );

@@ -23,7 +23,7 @@ Starting from zero? The [resource library](https://molio.cn/resources.html) ship
 
 <div align="center">
 
-[<img src="docs/img/video-poster.webp" alt="Zizhi Tongjian knowledge base demo" width="100%" style="border-radius: 8px;" />](https://molio.cn/videos/zizhitongjian-overview.mp4)
+[<img src="docs/img/video-poster.webp" alt="Zizhi Tongjian knowledge base demo" width="100%" style="border-radius: 8px;" />](https://molio.cn/videos/zizhitongjian-overview-v2.mp4)
 
 **▶ Click to watch the demo** — one book, one knowledge universe: 1,362 years of history from the *Zizhi Tongjian*, processed by Molio into an AI-explorable knowledge base
 
@@ -79,6 +79,11 @@ Covering **literature, history, philosophy, traditional Chinese medicine, medici
 - [Obstetric and gynecologic ultrasound: fetal anomalies, signs and differential diagnosis](https://molio.cn/resource/01M1152PE8YE365S9ZXDMNYCW6.html)
 - [Knowledge engineering: ontology, RAG, GraphRAG and agent engineering](https://molio.cn/resource/01M13QT669Q6E94PWACEH00YJF.html)
 - [Guangdong gaokao application planning: universities and majors](https://molio.cn/resource/01M2DFJ9E66FARK5SEBMPT92K0.html)
+- [*Romance of the Three Kingdoms*: character relationship map, all 120 chapters](https://molio.cn/resource/01M35RVX9S3TQK6ZE0QT9J6NG4.html)
+- [Drawing data extraction: from engineering drawings to computable data](https://molio.cn/resource/01M35QEB3RMK46SGCQ6WSZ3GZR.html)
+- [PCB flexible manufacturing: from online order to lights-out factory](https://molio.cn/resource/01M3VX66XMG5NHQ5HP9TK0Q2DC.html)
+- [Bar exam criminal law: 131 exam points and subjective-question training](https://molio.cn/resource/01M2QAYVBMH2YCF68BEA393BY4.html)
+- [Chinese classical poetry and prose: a panoramic knowledge base](https://molio.cn/resource/01M3VY2DZXW6KN1X5AFP7PXJ05.html)
 
 **[Browse all resources →](https://molio.cn/resources.html)**
 

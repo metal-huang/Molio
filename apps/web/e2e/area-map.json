@@ -30,7 +30,10 @@
         "apps/daemon/src/routes/conversations.ts",
         "apps/daemon/src/core/RunManager.ts",
         "apps/daemon/src/core/conversations/run-starter.ts",
-        "apps/daemon/src/streams/*"
+        "apps/daemon/src/streams/*",
+        "apps/web/src/components/RuntimeModelPill.*",
+        "apps/web/src/components/runtimeModelOptions.*",
+        "apps/web/src/stores/chatRuntimeStore.*"
       ],
       "specs": [
         "chat-single",
@@ -47,7 +50,9 @@
         "chat-repairing",
         "chat-timeout-fallback",
         "chat-work-visibility",
-        "file-ref-navigation"
+        "file-ref-navigation",
+        "model-switcher",
+        "composer-hints"
       ]
     },
     "kb": {
@@ -55,6 +60,7 @@
         "apps/web/src/components/kb/*",
         "apps/web/src/hooks/useKnowledge*",
         "apps/web/src/hooks/useKbTabs*",
+        "apps/web/src/hooks/useScrollMemory*",
         "apps/web/src/stores/kbChatSessionsStore*",
         "apps/daemon/src/core/knowledge.ts",
         "apps/daemon/src/core/db.ts",
@@ -65,6 +71,8 @@
       ],
       "specs": [
         "create-vault-form",
+        "kb-vault-list-menu",
+        "kb-open-vault-error",
         "knowledge",
         "markdown-render",
         "kb-tree-sort-locate",
@@ -74,6 +82,8 @@
         "file-chat-panel",
         "kb-tab-limit",
         "kb-tab-stale",
+        "kb-scroll-memory",
+        "kb-scroll-reset",
         "kb-large-file",
         "kb-large-file-gbk",
         "kb-large-file-15mb",
@@ -106,7 +116,7 @@
     },
     "graph": {
       "paths": [
-        "apps/web/src/components/graph/*",
+        "apps/web/src/components/graph/**",
         "apps/web/src/styles/graph.css",
         "apps/daemon/src/routes/graph.ts"
       ],
@@ -115,7 +125,8 @@
         "graph-settings",
         "graph-local",
         "split-view",
-        "graph-camera"
+        "graph-camera",
+        "graph-live-refresh"
       ]
     },
     "navigation": {
@@ -185,10 +196,13 @@
         "apps/web/src/hooks/useResourcePay*",
         "apps/web/src/stores/loginIntentStore*",
         "apps/web/src/styles/resources.css",
-        "apps/landing-page/resources-data.js"
+        "apps/landing-page/resources-data.js",
+        "apps/landing-page/resource-catalog.js",
+        "apps/web/e2e/resource-catalog-website.spec.ts"
       ],
       "specs": [
         "resources",
+        "resource-catalog-website",
         "navigation",
         "bootstrap"
       ]
@@ -227,6 +241,8 @@
         "apps/daemon/src/core/market/*",
         "apps/cloud/src/market/*",
         "apps/cloud/src/store/market-*",
+        "apps/cloud/src/ssr/*",
+        "packages/contracts/src/catalog.ts",
         "apps/web/e2e/fixtures/mock-oss.mjs"
       ],
       "specs": [
@@ -303,6 +319,14 @@
       "priority": "P1",
       "file": "graph-local.spec.ts"
     },
+    "graph-camera": {
+      "priority": "P1",
+      "file": "graph-camera.spec.ts"
+    },
+    "graph-live-refresh": {
+      "priority": "P1",
+      "file": "graph-live-refresh.spec.ts"
+    },
     "split-view": {
       "priority": "P1",
       "file": "split-view.spec.ts"
@@ -343,6 +367,14 @@
       "priority": "P1",
       "file": "kb-tab-stale.spec.ts"
     },
+    "kb-scroll-memory": {
+      "priority": "P1",
+      "file": "kb-scroll-memory.spec.ts"
+    },
+    "kb-scroll-reset": {
+      "priority": "P1",
+      "file": "kb-scroll-reset.spec.ts"
+    },
     "kb-large-file": {
       "priority": "P0",
       "file": "kb-large-file.spec.ts"
@@ -370,6 +402,10 @@
     "resources": {
       "priority": "P1",
       "file": "resources.spec.ts"
+    },
+    "resource-catalog-website": {
+      "priority": "P1",
+      "file": "resource-catalog-website.spec.ts"
     },
     "pdf-preview": {
       "priority": "P1",
