@@ -4,10 +4,11 @@
 
 import { Hono } from 'hono';
 import { stream } from 'hono/streaming';
-import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { CreateVaultRequest } from '@molio/contracts';
+import { MAX_IMPORT_FILE_SIZE, MAX_IMPORT_BATCH_SIZE } from '@molio/contracts';
 import {
   listVaults,
   getVault,
@@ -28,11 +29,13 @@ import {
   deleteFile,
   createDirectory,
   deleteDirectory,
+  validateVaultPath,
   renamePath,
   ensureVaultDir,
   searchFiles,
   importFiles,
   isInsideProtected,
+  listPublishableTopDirs,
   type ImportResult,
 } from '../core/knowledge.js';
 import { annotateTreeStatus } from '../core/wiki-status.js';
@@ -64,6 +67,14 @@ export function knowledgeRoutes(
     const body = await c.req.json<CreateVaultRequest>();
     if (!body.name || !body.path) {
       return c.json({ error: { code: 'BAD_REQUEST', message: 'name and path are required' } }, 400);
+    }
+
+    // Reject dot-dir roots and vault nesting/overlap before touching disk —
+    // 2026-09 support incident: a user registered `<vault>\.claude` as a
+    // standalone vault and every reference then resolved against the wrong root.
+    const pathIssue = validateVaultPath(body.path, listVaults(db));
+    if (pathIssue) {
+      return c.json({ error: { code: pathIssue.code, message: pathIssue.message } }, 400);
     }
 
     try {
@@ -157,15 +168,7 @@ export function knowledgeRoutes(
       return c.json({ error: { code: 'NOT_FOUND', message: 'Vault not found' } }, 404);
     }
     try {
-      const dirs: string[] = [];
-      for (const entry of readdirSync(vault.path, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        // 隐藏目录排除，但 .molio 显式放行
-        if (entry.name.startsWith('.') && entry.name !== '.molio') continue;
-        dirs.push(entry.name);
-      }
-      dirs.sort();
-      return c.json({ dirs });
+      return c.json({ dirs: listPublishableTopDirs(vault.path) });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to scan vault';
       return c.json({ error: { code: 'INTERNAL', message } }, 500);
@@ -487,7 +490,10 @@ export function knowledgeRoutes(
 
   // ─── File import (drag-and-drop / ImportModal) ───
 
-  const MAX_IMPORT_SIZE = 50 * 1024 * 1024; // 50 MB
+  // Limits live in @molio/contracts — shared with the web pre-flight checks
+  // so the UI filters files against exactly what the daemon enforces.
+  const MAX_IMPORT_SIZE = MAX_IMPORT_FILE_SIZE;
+  const MAX_BATCH_SIZE = MAX_IMPORT_BATCH_SIZE;
 
   // POST /api/knowledge/vaults/:id/import — import files via multipart
   app.post('/vaults/:id/import', async (c) => {
@@ -500,8 +506,11 @@ export function knowledgeRoutes(
     const rawLen = c.req.header('Content-Length');
     if (rawLen != null) {
       const contentLength = parseInt(rawLen, 10);
-      if (contentLength > MAX_IMPORT_SIZE) {
-        return c.json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Upload too large (max 50MB)' } }, 413);
+      if (contentLength > MAX_BATCH_SIZE) {
+        return c.json(
+          { error: { code: 'PAYLOAD_TOO_LARGE', message: 'File too large (max 100MB)' } },
+          413,
+        );
       }
     }
 

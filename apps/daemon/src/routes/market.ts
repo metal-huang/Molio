@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 import { AuthCloudError, type AuthClient } from '../core/auth/auth-client.js';
 import { MarketClient, putToSignedUrl } from '../core/market/client.js';
 import { packVaultToZip } from '../core/market/packager.js';
+import { listPublishableTopDirs } from '../core/knowledge.js';
 import { denyCrossOrigin } from './auth.js';
 import type { MarketPublishSuggestion } from '@molio/contracts';
 import { suggestPublishMeta } from '../core/market/suggest.js';
@@ -23,7 +24,7 @@ export const MAX_ADMIN_DIRECT_ZIP_BYTES = 70 * 1024 * 1024;
 const MAX_SUGGEST_BODY_BYTES = 64 * 1024;
 /** 无缓存冷启动时同步等云端的上限：云端 FC 冷启动 + 慢网络可拖到十几秒，超时降级空目录 */
 export const LISTINGS_COLD_TIMEOUT_MS = 8_000;
-/** SWR 后台刷新最小间隔：缓存足够新不打云端（前端每次进资源页都会强制 refresh，需防抖） */
+/** SWR 后台刷新最小间隔：缓存比这新就不再打云端（连续进出资源页时防抖） */
 const LISTINGS_REFRESH_MIN_AGE_MS = 30_000;
 
 /** 表单 price（元字符串）→ 分；空/非法/≤0 → undefined（免费）。云端对非管理员再强制 0。 */
@@ -72,6 +73,16 @@ export function marketRoutes(db: Database.Database, auth: AuthClient, opts: Mark
     return null;
   };
 
+  app.get('/taxonomy', async (c) => {
+    try { return c.json(await client.taxonomy()); } catch (e) { return cloudError(c, e); }
+  });
+  app.post('/taxonomy', async (c) => {
+    const denied = denyCrossOrigin(c) ?? denyOversized(c, 4096);
+    if (denied) return denied;
+    const body = await c.req.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return c.json({error:'invalid_metadata'},400);
+    try { return c.json(await client.createTaxon(body),201); } catch (e) { return cloudError(c, e); }
+  });
   // ── 读侧：stale-while-revalidate + 冷启动超时兜底 ──
   // 教训（2026-09）：旧实现只在云端「不可达」时才读缓存，云端「慢」（FC 冷启动 +
   // 慢网络）时无超时无限干等 —— 资源页首次打开白屏 15s+。现在：
@@ -114,15 +125,20 @@ export function marketRoutes(db: Database.Database, auth: AuthClient, opts: Mark
 
   app.get('/listings', async (c) => {
     const cached = readListingsCache();
-    if (cached) {
-      if (Date.now() - cached.fetchedAt >= LISTINGS_REFRESH_MIN_AGE_MS) refreshListingsInBackground();
-      return c.json({ listings: cached.listings, stale: true });
+    if (cached && c.req.query('refresh') !== '1') {
+      const age = Date.now() - cached.fetchedAt;
+      const revalidating = age >= LISTINGS_REFRESH_MIN_AGE_MS;
+      if (revalidating) refreshListingsInBackground();
+      // SWR 先回缓存是常规路径，不是故障：后台已经在取云端数据了，所以这里 stale 恒为 false。
+      // stale 只表示「这次没能从云端拿到数据」——UI 据此才提示用户，别把重验证报成故障。
+      return c.json({ listings: cached.listings, stale: false, revalidating });
     }
     try {
       const body = await client.list({ timeoutMs: listingsTimeoutMs });
       writeListingsCache(body.listings);
       return c.json({ listings: body.listings, stale: false });
     } catch (e) {
+      if (cached) return c.json({listings: cached.listings, stale: true});
       if (e instanceof AuthCloudError && e.status === 0) {
         return c.json({ listings: [], stale: true });
       }
@@ -201,6 +217,8 @@ export function marketRoutes(db: Database.Database, auth: AuthClient, opts: Mark
       let tags: string[] = [];
       try { tags = JSON.parse(str('tags') || '[]') as string[]; } catch { /* 非法 tags 按空，云端再兜底 */ }
       const created = await client.create({
+        ...(str('categoryId') ? {categoryId:str('categoryId')} : {}),
+        ...(str('resourceTypeId') ? {resourceTypeId:str('resourceTypeId')} : {}),
         name: str('name'), summary: str('summary'), icon: str('icon'), tags,
         vaultSize: pack.size, previews: previews.map((p) => ({ ext: p.ext, size: p.size })),
         priceCents: parsePriceCents(parsed['price']),
@@ -258,6 +276,13 @@ export function marketRoutes(db: Database.Database, auth: AuthClient, opts: Mark
     try {
       let include: string[] | undefined;
       try { include = JSON.parse(parsed && typeof parsed['include'] === 'string' ? parsed['include'] : '[]') as string[]; } catch { /* ignore */ }
+      // 升版表单不显示目录选择、也就不传 include，语义是「整个 vault」。但打包器缺省
+      // 排除所有点目录，`.molio` 会因此被静默丢掉——故兜底为一级可发布目录，让它走
+      // explicitDir 豁免通道（与发布页 GET /vaults/:id/top-dirs 同一规则）。
+      // 读目录失败时不吞错：回落 undefined，交给 packVaultToZip 报它自己的 vault_not_found。
+      if (!include?.length) {
+        try { include = listPublishableTopDirs(vaultPath); } catch { include = undefined; }
+      }
       pack = await packVaultToZip(vaultPath, { maxBytes: MAX_ZIP_BYTES, include: include?.length ? include : undefined });
       const previews = previewFiles.length > 0 ? await checkPreviews(previewFiles) : []; // 不传 = 沿用旧图
       const upd = await client.update(
@@ -265,6 +290,8 @@ export function marketRoutes(db: Database.Database, auth: AuthClient, opts: Mark
         previews.map((p) => ({ ext: p.ext, size: p.size })),
         {
           priceCents: parsePriceCents(parsed?.['price']),
+          ...(parsed && typeof parsed['categoryId'] === 'string' ? {categoryId:parsed['categoryId']} : {}),
+          ...(parsed && typeof parsed['resourceTypeId'] === 'string' ? {resourceTypeId:parsed['resourceTypeId']} : {}),
           ...(parsed && typeof parsed['name'] === 'string' && parsed['name'].trim() ? { name: parsed['name'] } : {}),
           ...(parsed && typeof parsed['summary'] === 'string' && parsed['summary'].trim() ? { summary: parsed['summary'] } : {}),
           ...(parsed && typeof parsed['icon'] === 'string' && parsed['icon'] ? { icon: parsed['icon'] } : {}),

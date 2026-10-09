@@ -1,6 +1,7 @@
 {
   "_comment": "Area → path globs + E2E spec mapping. Used by scripts/select-specs.mjs to pick affected specs from git diff.",
   "_priority_default": "P0 specs always run; P1 specs run only when their area is touched; P2 specs run only in nightly full.",
+  "_dependent_specs_note": "specs 列表要收「会被该 area 源码改动打红」的 spec，而不只是「属于该 area」的。NavRail 是被多个 area 的 spec 点击的公共依赖——auth.spec 点 [data-view=home]、market-community.spec 也点导航项——所以挂到 navigation 下，否则删一个导航按钮只有 navigation 自己的 spec 会跑。",
   "areas": {
     "chat": {
       "paths": [
@@ -15,7 +16,7 @@
         "apps/web/src/components/ThinkingBlock.*",
         "apps/web/src/components/ToolCard.*",
         "apps/web/src/components/ToolGroup.*",
-        "apps/web/src/components/ChatPane.*",
+        "apps/web/src/components/ChatSessionView.*",
         "apps/web/src/components/CodeBlock.*",
         "apps/web/src/components/SaveToKbButton.*",
         "apps/web/src/components/SaveAsSkillButton.*",
@@ -50,6 +51,7 @@
         "chat-repairing",
         "chat-timeout-fallback",
         "chat-work-visibility",
+        "chat-fullscreen",
         "file-ref-navigation",
         "model-switcher",
         "composer-hints"
@@ -60,6 +62,7 @@
         "apps/web/src/components/kb/*",
         "apps/web/src/hooks/useKnowledge*",
         "apps/web/src/hooks/useKbTabs*",
+        "apps/web/src/hooks/useScrollMemory*",
         "apps/web/src/stores/kbChatSessionsStore*",
         "apps/daemon/src/core/knowledge.ts",
         "apps/daemon/src/core/db.ts",
@@ -70,6 +73,8 @@
       ],
       "specs": [
         "create-vault-form",
+        "kb-vault-list-menu",
+        "kb-open-vault-error",
         "knowledge",
         "markdown-render",
         "kb-tree-sort-locate",
@@ -77,15 +82,20 @@
         "kb-chat-sessions",
         "kb-qa-trigger",
         "file-chat-panel",
+        "floating-chat",
         "kb-tab-limit",
         "kb-tab-stale",
+        "kb-scroll-memory",
+        "kb-scroll-reset",
         "kb-large-file",
         "kb-large-file-gbk",
         "kb-large-file-15mb",
         "kb-large-file-too-large",
         "pdf-preview",
         "chat-work-visibility",
-        "split-view"
+        "split-view",
+        "kb-terminology",
+        "market-community"
       ]
     },
     "publish": {
@@ -111,7 +121,7 @@
     },
     "graph": {
       "paths": [
-        "apps/web/src/components/graph/*",
+        "apps/web/src/components/graph/**",
         "apps/web/src/styles/graph.css",
         "apps/daemon/src/routes/graph.ts"
       ],
@@ -120,7 +130,8 @@
         "graph-settings",
         "graph-local",
         "split-view",
-        "graph-camera"
+        "graph-camera",
+        "graph-live-refresh"
       ]
     },
     "navigation": {
@@ -132,7 +143,11 @@
       ],
       "specs": [
         "bootstrap",
-        "navigation"
+        "navigation",
+        "home-onboarding",
+        "default-landing",
+        "auth",
+        "market-community"
       ]
     },
     "settings": {
@@ -190,10 +205,13 @@
         "apps/web/src/hooks/useResourcePay*",
         "apps/web/src/stores/loginIntentStore*",
         "apps/web/src/styles/resources.css",
-        "apps/landing-page/resources-data.js"
+        "apps/landing-page/resources-data.js",
+        "apps/landing-page/resource-catalog.js",
+        "apps/web/e2e/resource-catalog-website.spec.ts"
       ],
       "specs": [
         "resources",
+        "resource-catalog-website",
         "navigation",
         "bootstrap"
       ]
@@ -202,6 +220,7 @@
       "paths": [
         "apps/web/src/components/kb/KbFilePanel.*",
         "apps/web/src/components/kb/KbFileTree.*",
+        "apps/web/src/components/kb/KbMainContent.*",
         "apps/web/src/components/kb/KbModals.*",
         "apps/web/src/components/kb/ImportConflictDialog.*",
         "apps/web/src/components/kb/KnowledgeBasePage.*",
@@ -210,6 +229,8 @@
         "apps/daemon/src/core/knowledge.ts"
       ],
       "specs": [
+        "kb-import-entry",
+        "kb-terminology",
         "drag-drop-import",
         "kb-folder-ops",
         "kb-folder-drag-real",
@@ -232,6 +253,8 @@
         "apps/daemon/src/core/market/*",
         "apps/cloud/src/market/*",
         "apps/cloud/src/store/market-*",
+        "apps/cloud/src/ssr/*",
+        "packages/contracts/src/catalog.ts",
         "apps/web/e2e/fixtures/mock-oss.mjs"
       ],
       "specs": [
@@ -308,6 +331,14 @@
       "priority": "P1",
       "file": "graph-local.spec.ts"
     },
+    "graph-camera": {
+      "priority": "P1",
+      "file": "graph-camera.spec.ts"
+    },
+    "graph-live-refresh": {
+      "priority": "P1",
+      "file": "graph-live-refresh.spec.ts"
+    },
     "split-view": {
       "priority": "P1",
       "file": "split-view.spec.ts"
@@ -323,6 +354,14 @@
     "kb-tree-sort-locate": {
       "priority": "P1",
       "file": "kb-tree-sort-locate.spec.ts"
+    },
+    "kb-import-entry": {
+      "priority": "P0",
+      "file": "kb-import-entry.spec.ts"
+    },
+    "kb-terminology": {
+      "priority": "P1",
+      "file": "kb-terminology.spec.ts"
     },
     "kb-chat-entry": {
       "priority": "P1",
@@ -340,6 +379,10 @@
       "priority": "P1",
       "file": "file-chat-panel.spec.ts"
     },
+    "floating-chat": {
+      "priority": "P1",
+      "file": "floating-chat.spec.ts"
+    },
     "kb-tab-limit": {
       "priority": "P0",
       "file": "kb-tab-limit.spec.ts"
@@ -348,9 +391,21 @@
       "priority": "P1",
       "file": "kb-tab-stale.spec.ts"
     },
+    "kb-scroll-memory": {
+      "priority": "P1",
+      "file": "kb-scroll-memory.spec.ts"
+    },
+    "kb-scroll-reset": {
+      "priority": "P1",
+      "file": "kb-scroll-reset.spec.ts"
+    },
     "kb-large-file": {
       "priority": "P0",
       "file": "kb-large-file.spec.ts"
+    },
+    "home-onboarding": {
+      "priority": "P1",
+      "file": "home-onboarding.spec.ts"
     },
     "kb-large-file-gbk": {
       "priority": "P0",
@@ -372,9 +427,17 @@
       "priority": "P1",
       "file": "navigation.spec.ts"
     },
+    "default-landing": {
+      "priority": "P1",
+      "file": "default-landing.spec.ts"
+    },
     "resources": {
       "priority": "P1",
       "file": "resources.spec.ts"
+    },
+    "resource-catalog-website": {
+      "priority": "P1",
+      "file": "resource-catalog-website.spec.ts"
     },
     "pdf-preview": {
       "priority": "P1",
@@ -431,6 +494,38 @@
     "chat-work-visibility": {
       "priority": "P1",
       "file": "chat-work-visibility.spec.ts"
+    },
+    "chat-fullscreen": {
+      "priority": "P1",
+      "file": "chat-fullscreen.spec.ts"
+    },
+    "chat-continue": {
+      "priority": "P1",
+      "file": "chat-continue.spec.ts"
+    },
+    "chat-save-kb": {
+      "priority": "P1",
+      "file": "chat-save-kb.spec.ts"
+    },
+    "chat-timeout-fallback": {
+      "priority": "P1",
+      "file": "chat-timeout-fallback.spec.ts"
+    },
+    "composer-hints": {
+      "priority": "P1",
+      "file": "composer-hints.spec.ts"
+    },
+    "model-switcher": {
+      "priority": "P1",
+      "file": "model-switcher.spec.ts"
+    },
+    "kb-open-vault-error": {
+      "priority": "P1",
+      "file": "kb-open-vault-error.spec.ts"
+    },
+    "kb-vault-list-menu": {
+      "priority": "P1",
+      "file": "kb-vault-list-menu.spec.ts"
     }
   }
 }

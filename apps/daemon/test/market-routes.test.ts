@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Hono } from 'hono';
+import { Unzip } from 'fflate';
 import { openDatabase } from '../src/core/db.js';
 import { marketRoutes } from '../src/routes/market.js';
 
@@ -52,6 +53,14 @@ function makeVault(): string {
 
 const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 
+/** 读回直传到 OSS 替身的 zip 条目名 */
+function listZipEntries(zipBytes: Uint8Array): string[] {
+  const entries: string[] = [];
+  const uz = new Unzip((file) => { entries.push(file.name); file.ondata = () => {}; });
+  uz.push(zipBytes, true);
+  return entries.sort();
+}
+
 test('publish 编排：打包→创建→直传→确认→本地映射', async () => {
   const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), 'molio-db-')));
   const vaultPath = makeVault();
@@ -79,6 +88,38 @@ test('publish 编排：打包→创建→直传→确认→本地映射', async 
   assert.equal(localCount.n, 1); // 发布成功 → listing→v1 映射落库
 });
 
+// 回归（2026-10 明史升版丢 .molio）：升版表单不显示目录选择 → 不传 include。
+// 打包器对点目录的默认排除只认 include 里的显式项，于是 .molio 被静默丢掉，
+// 而它正是正文图片等资源的落脚处（.molio/assets）。升版必须兜底成一级可发布目录。
+test('update 编排：不传 include 时兜底含 .molio，仍排除其他点目录', async () => {
+  const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), 'molio-db-')));
+  const vaultPath = makeVault();
+  fs.mkdirSync(path.join(vaultPath, 'wiki'), { recursive: true });
+  fs.writeFileSync(path.join(vaultPath, 'wiki', 'index.md'), '# wiki', 'utf8');
+  fs.mkdirSync(path.join(vaultPath, '.molio', 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(vaultPath, '.molio', 'assets', 'map.png'), PNG_1PX, 'utf8');
+  fs.writeFileSync(path.join(vaultPath, '.molio', 'config.json'), '{}', 'utf8');
+  db.prepare('INSERT INTO vaults (id, name, path, created_at) VALUES (?, ?, ?, ?)').run('v1', '测试库', vaultPath, Date.now());
+  const cloud = makeCloud();
+  const app = new Hono();
+  app.route('/api/market', marketRoutes(db, { getAccessToken: async () => 'tok' } as never, { fetchImpl: cloud.fetchImpl, baseUrl: 'https://cloud.local' }));
+
+  const form = new FormData();
+  form.set('vaultId', 'v1');
+  const res = await app.request('/api/market/listings/01test9/update', { method: 'POST', body: form });
+  assert.equal(res.status, 200);
+  assert.equal(cloud.state.confirmed, 1);
+
+  const zipUrl = [...cloud.objects.keys()].find((k) => k.includes('vault.zip'));
+  assert.ok(zipUrl, '升版应直传一个 zip');
+  const entries = listZipEntries(cloud.objects.get(zipUrl!)!);
+  assert.ok(entries.includes('.molio/config.json'), `.molio 应入包，实际：${entries.join(', ')}`);
+  assert.ok(entries.includes('.molio/assets/map.png'), `.molio/assets 应入包，实际：${entries.join(', ')}`);
+  assert.ok(entries.includes('wiki/index.md'));
+  assert.ok(entries.includes('note.md'));
+  assert.ok(!entries.some((e) => e.startsWith('.obsidian')), '其他点目录仍应排除');
+});
+
 test('listings：成功落缓存；云端不可达回缓存 stale', async () => {
   const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), 'molio-db-')));
   const ok = makeCloud();
@@ -90,7 +131,7 @@ test('listings：成功落缓存；云端不可达回缓存 stale', async () => 
   const res1 = await mk(ok.fetchImpl).request('/api/market/listings');
   assert.equal(res1.status, 200);
   assert.equal(((await res1.json()) as { stale?: boolean }).stale ?? false, false);
-  const res2 = await mk(makeCloud({ fail: true }).fetchImpl).request('/api/market/listings');
+  const res2 = await mk(makeCloud({ fail: true }).fetchImpl).request('/api/market/listings?refresh=1');
   assert.equal(res2.status, 200);
   const body = (await res2.json()) as { stale: boolean; listings: unknown[] };
   assert.equal(body.stale, true);
@@ -111,7 +152,7 @@ function seedListingsCache(db: ReturnType<typeof openDatabase>, listings: unknow
     .run(JSON.stringify(listings), fetchedAt);
 }
 
-test('listings SWR：有缓存立即返回（stale），过期缓存触发后台刷新落库', async () => {
+test('listings SWR：有缓存立即返回（不算 stale、标记 revalidating），过期缓存触发后台刷新落库', async () => {
   const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), 'molio-db-')));
   // fetched_at 足够旧（> 30s 最小刷新间隔）→ 应触发后台刷新
   seedListingsCache(db, [{ id: 'cached', name: '缓存条目', priceCents: 0 }], Date.now() - 120_000);
@@ -120,8 +161,11 @@ test('listings SWR：有缓存立即返回（stale），过期缓存触发后台
 
   const res = await app.request('/api/market/listings');
   assert.equal(res.status, 200);
-  const body = (await res.json()) as { stale: boolean; listings: Array<{ id: string }> };
-  assert.equal(body.stale, true);
+  const body = (await res.json()) as { stale: boolean; revalidating: boolean; listings: Array<{ id: string }> };
+  // 先回缓存、后台刷新是常规路径，不是故障：stale 只留「取不到云端」这一种含义，
+  // 否则前端会对每次缓存命中都弹「暂时无法获取最新资源」
+  assert.equal(body.stale, false);
+  assert.equal(body.revalidating, true);
   assert.equal(body.listings[0]?.id, 'cached'); // 首屏来自缓存，不等云端
 
   // 后台刷新最终把云端数据写回缓存（轮询等待，上限 2s）
@@ -150,6 +194,9 @@ test('listings SWR：缓存新鲜时不打云端（后台刷新防抖）', async
   assert.equal(res1.status, 200);
   assert.equal(res2.status, 200);
   assert.equal(calls, 0, '缓存新鲜时不应发起云端请求');
+  const body = (await res1.json()) as { stale: boolean; revalidating: boolean };
+  assert.equal(body.stale, false);
+  assert.equal(body.revalidating, false, '缓存还新鲜就不该标记成正在重验证');
 });
 
 test('listings 冷启动：云端 hang → 超时后返回空目录 stale，不无限干等', async () => {
@@ -213,4 +260,16 @@ test('purchases：带 Bearer 透传云端；云端 502 pay_unreachable 原样归
   const res3 = await mk(makeCloud({ fail: true }).fetchImpl).request('/api/market/purchases');
   assert.equal(res3.status, 502);
   assert.equal(((await res3.json()) as { error: string }).error, 'cloud_unreachable');
+});
+
+
+test('manual refresh bypasses even fresh cache and returns the new catalog', async () => {
+  const db = openDatabase(fs.mkdtempSync(path.join(os.tmpdir(), 'molio-db-')));
+  try {
+    seedListingsCache(db, [{id:'old'}], Date.now());
+    const app = mkApp(db, makeCloud().fetchImpl);
+    const body = await (await app.request('/api/market/listings?refresh=1')).json() as {stale:boolean;listings:{id:string}[]};
+    assert.equal(body.stale, false);
+    assert.equal(body.listings[0]?.id, 'x');
+  } finally { db.close(); }
 });
