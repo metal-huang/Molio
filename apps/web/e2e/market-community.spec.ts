@@ -173,6 +173,24 @@ test.describe('社区发布 → 展示 → 下载闭环（P1，mock OSS）', () 
     await expect(page.locator('[data-testid="kb-publish-pane"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="kb-wtab-publish"]')).toHaveClass(/is-active/);
 
+    // 悬浮对话按钮必须让位：它固定在 right/bottom 24px，与发布页脚右对齐的「发布」完全
+    // 重叠，z-index 90 会把点击整个吃掉（真实用户点不到发布，不只是 Playwright）。
+    // 让位规则见 KbChatSessionsPanel.css 的 `body:has(.kb-pane:not(.kb-pane--closed) .kb-publish-pane)`。
+    // 断言用「不可见」而非 toHaveCount(0)：让位是 CSS display:none，元素仍在 DOM 里
+    // （toHaveCount 数的是节点，不认 display）。
+    await expect(page.locator('[data-testid="floating-chat-btn"]')).toBeHidden();
+
+    // 反向：让位只在发布 pane **激活**时生效。切到文档 tab 后发布 pane 只是
+    // `.kb-pane--closed`（visibility:hidden），**仍会被 `:has()` 命中**——没有
+    // CSS 里那句 `:not(.kb-pane--closed)` 的话，发布 tab 仅仅「存在」就会白白藏掉
+    // 按钮。这一对断言就是那个守卫的正反面。（此刻表单是空的，来回切不丢用户输入）
+    await page.locator('.kb-tree-item').filter({ hasText: 'community-doc.md' }).click();
+    await expect(page.locator('[data-testid="kb-wtab-publish"]')).not.toHaveClass(/is-active/);
+    await expect(page.locator('[data-testid="floating-chat-btn"]')).toBeVisible();
+    await page.locator('[data-testid="kb-wtab-publish"]').click();
+    await expect(page.locator('[data-testid="kb-wtab-publish"]')).toHaveClass(/is-active/);
+    await expect(page.locator('[data-testid="floating-chat-btn"]')).toBeHidden();
+
     // 名称是 input、简介是 textarea（旧版用 input 序号 [1] 填简介会误中自定义标签输入框）
     await page.locator('.publish-form .publish-field input').first().fill(resourceName);
     await page
@@ -185,6 +203,10 @@ test.describe('社区发布 → 展示 → 下载闭环（P1，mock OSS）', () 
     });
     await expect(page.locator('.publish-preview-item')).toHaveCount(1);
     await page.locator('.publish-agreement input[type="checkbox"]').check();
+    await page.getByTestId('new-category').click();
+    await page.getByTestId('taxon-name').fill('数学');
+    await page.getByTestId('taxon-save').click();
+    await expect(page.getByTestId('publish-category').locator('option:checked')).toHaveText('数学');
     await page.locator('[data-testid="publish-submit-btn"]').click();
     // 成功态（文案 publish.done）；打包 + 直传 + confirm 全在本地，秒级但留足余量
     await expect(page.locator('.publish-done')).toContainText('发布成功', { timeout: 30_000 });
@@ -252,9 +274,12 @@ test.describe('社区发布 → 展示 → 下载闭环（P1，mock OSS）', () 
       timeout: 10_000,
     });
 
-    // 免费条目：官方目录全付费，免费筛选下是上个用例发布的社区条目（价格恒 0）
-    await page.locator('[data-testid="resources-filter-free"]').click();
-    const freeCards = page.locator('[data-testid^="resource-card-"]');
+    // 免费条目：e2e 云端是内存 store（MOLIO_ENV=local），目录里只有上个用例发布的
+    // 社区条目（价格恒 0）。新目录页按分类分组、已无 paid/free 筛选 pills
+    // —— 直接按名称定位该免费条目。
+    const freeCards = page
+      .locator('[data-testid^="resource-card-"]')
+      .filter({ hasText: resourceName });
     await expect(freeCards.first()).toBeVisible({ timeout: 10_000 });
     const id = ((await freeCards.first().getAttribute('data-testid')) as string).replace(
       'resource-card-',

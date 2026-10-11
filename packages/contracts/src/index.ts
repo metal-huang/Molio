@@ -10,6 +10,7 @@ export type {
   InstallEvent,
   InstallSource,
   NpmNativeInstallSource,
+  NpmJsInstallSource,
   PlatformRequirement,
   InstallConfig,
   InstallPhase,
@@ -167,3 +168,12 @@ export type {
   MarketPurchasesResponse,
   MarketPublishSuggestion,
 } from './market.js';
+
+// Value exports — shared limits (single source of truth)
+export { MAX_IMPORT_FILE_SIZE, MAX_IMPORT_BATCH_SIZE } from './knowledge.js';
+
+export { INITIAL_MARKET_TAXA } from './market.js';
+export type { MarketTaxon, MarketTaxonomy } from './market.js';
+
+export { marketCatalogView } from './catalog.js';
+export type { CatalogQuery } from './catalog.js';
