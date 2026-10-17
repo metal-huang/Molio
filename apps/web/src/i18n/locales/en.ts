@@ -63,6 +63,7 @@ const en: Record<string, string> = {
 
   // ── HomePage ──
   'home.newChat': 'New chat',
+  'home.minimize': 'Minimize to panel',
   'home.noAgent': 'No agent selected — set a default in Runtimes',
   'home.tagline': 'Ink stored in the library, flowing through all things',
   'home.onboarding.title': 'Start with a knowledge base',
@@ -166,7 +167,9 @@ const en: Record<string, string> = {
   // ── Session output panel (Home dock) ──
   'output.title': 'Session output',
   'output.stats': '{writes} writes · {turns} turns',
-  'output.writesLabel': 'Writes',
+  'output.sectionCreates': 'Created {count}',
+  'output.sectionUpdates': 'Updated {count}',
+  'output.othersLabel': 'Other writes ({count}) — indexes, logs, scripts…',
   'output.locate': 'Locate this step in the conversation',
   'output.reveal': 'Show in folder',
   'output.empty': 'No recorded writes in this conversation',
@@ -180,9 +183,6 @@ const en: Record<string, string> = {
   'output.tabOverview': 'Overview',
   'output.tabChanges': 'Changes',
   'output.changesEmpty': 'No changes to show',
-  'output.statCreates': 'Created',
-  'output.statUpdates': 'Updated',
-  'output.statAppends': 'Appended',
   'output.changeKind.create': 'New file',
   'output.changeKind.update': 'Edited',
   'output.changeKind.append': 'Appended',
@@ -685,6 +685,17 @@ const en: Record<string, string> = {
   'kb.frontmatter.collapse': 'Hide properties',
   'kb.frontmatter.properties': 'Properties',
   'kb.floatingChat': 'Open AI chat',
+  // Hidden state (tucked into an edge, only a 12px tab shows): clicking now recalls the
+  // button instead of opening the panel, so the label has to say that.
+  'kb.floatingChatRecall': 'Click to bring the chat button back',
+  // One-off teaching tip on the first hide (see HINT_SEEN_KEY in FloatingChatButton)
+  'kb.chatBtnHideHint': 'Chat button tucked away — click the edge tab or right-click to bring it back',
+  // Floating button context menu (fixed actions, same sources as KB fixed buttons)
+  'kb.chatMenu.build': 'Build Wiki',
+  'kb.chatMenu.openSession': 'Open chat session',
+  'kb.chatMenu.hide': 'Hide button',
+  'kb.chatMenu.show': 'Show button',
+  'kb.chatMenu.resetPos': 'Reset position',
 
   // ── FilePicker ──
   'filePicker.justNow': 'Just now',

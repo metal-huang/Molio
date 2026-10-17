@@ -14,7 +14,7 @@
 
 **生成侧**（写的时候就不写坏）：wiki-build / wiki-ingest / wiki-save 三个会写 wiki 页面的 skill，核心原则里新增「加粗书写规范（CJK）」一条——加粗首尾紧贴文字；标点贴边时按失效侧补半角空格：闭合侧失效在闭合 `**` 后补（`**生态位（萝卜坑）** 的分配`），开启侧失效在开启 `**` 前补（`甲 **「重点」** 乙`），两侧都失效就两侧都补。只补一侧是不够的：双侧失效的写法只补闭合侧空格，开启侧依然失效（已用 marked 实测确认）。
 
-**检查侧**（已写坏的能查出来）：新增确定性扫描脚本 `apps/daemon/src/tools/skills/wiki-build/scripts/cjk-emphasis-check.mjs`，wiki-lint 的检查方法 3 接入调用、检查清单新增第 14 项。脚本扫 vault 的 `wiki/` 目录，输出 JSON 报告（每条含文件、行号、失效侧 `side`、配对文本、上下文），恒 exit 0——它是报告工具不是门禁，vault 不存在、`wiki` 不是目录、单文件读失败都不崩。
+**检查侧**（已写坏的能查出来）：新增确定性扫描脚本 `apps/daemon/src/tools/skills/wiki-build/scripts/cjk-emphasis-check.mjs`，wiki-lint 的检查方法 3 接入调用、检查清单新增第 15 项（与 main 新增的图版检查第 14 项共存）。脚本扫 vault 的 `wiki/` 目录，输出 JSON 报告（每条含文件、行号、失效侧 `side`、配对文本、上下文），恒 exit 0——它是报告工具不是门禁，vault 不存在、`wiki` 不是目录、单文件读失败都不崩。
 
 既有 vault 不需要手动同步：skill-installer 按内容哈希把整棵 skill 目录（含 `scripts/`）镜像到 vault 的 `.claude/skills/`，新脚本随同步自动到位。wiki-\* 五件套版本号按约定共进 2.1.0 → 2.2.0。
 
