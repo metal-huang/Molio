@@ -221,9 +221,16 @@ export function KbMainContent({
   // runs for the small-.md doocs path — never for the CM source view.
   const renderedContent = useMemo(
     () => isSmallMd
-      ? preprocessKbMarkdown(editedContent ?? fileContent?.content ?? '', vaultId ?? undefined)
+      ? preprocessKbMarkdown(
+          editedContent ?? fileContent?.content ?? '',
+          vaultId ?? undefined,
+          // The note's own vault-relative path — needed so `![](图.png)`
+          // resolves against this note's folder (Obsidian's rule) rather than
+          // the SPA origin, which always 404s.
+          selectedFile ?? undefined,
+        )
       : '',
-    [editedContent, fileContent?.content, vaultId, isSmallMd],
+    [editedContent, fileContent?.content, vaultId, isSmallMd, selectedFile],
   );
 
   // Raw text used by the CM viewer — NO doocs preprocessing (those transforms
@@ -491,8 +498,11 @@ export function KbMainContent({
    * 可读，这个动作根本不成立。置灰而非隐藏，是因为它顺带说明了「先导文件、再建 Wiki」
    * 这个先后关系——隐藏掉的话，用户永远不会知道这个知识库能产出 Wiki。
    */
+  // key 固定（不随主次对调变化）：这两个按钮在同一 flex 行里互相对调位置，
+  // key 若跟随主次变化会导致对调时 React 卸载/重建按钮而非复用。
   const buildWikiButton = (primary: boolean) => (
     <button
+      key="build-wiki"
       type="button"
       className={primary ? 'wiki-cta-btn' : 'wiki-cta-btn wiki-cta-btn--outline'}
       data-testid="kb-empty-build-cta"
@@ -507,6 +517,7 @@ export function KbMainContent({
   const importButton = (primary: boolean) =>
     onImport ? (
       <button
+        key="import"
         type="button"
         className={primary ? 'wiki-cta-btn' : 'wiki-cta-btn wiki-cta-btn--outline'}
         data-testid="kb-empty-import-cta"

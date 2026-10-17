@@ -16,7 +16,7 @@ import {
   HermesConfigError,
   type ApplyHermesProviderOpts,
 } from '../core/runtimes/hermes-config.js';
-import type { InstallEvent } from '@molio/contracts';
+import type { InstallEvent, ApiRetryInfo } from '@molio/contracts';
 
 /** Agent ids whose provider config Molio manages (native config files). */
 const PROVIDER_AGENTS = new Set(['codex', 'hermes']);
@@ -27,7 +27,10 @@ export function agentsRoutes(runManager: RunManager): Hono {
   // GET / — list detected agents. Detection is async + TTL-cached + probed in
   // parallel (see RunManager.detectAgentsAsync): the old sync re-scan froze
   // the whole daemon event loop for seconds on every first-screen load.
+  // ?refresh=1 drops the TTL cache first, so the settings 「重新扫描」 button
+  // really re-probes instead of being handed the cached snapshot.
   app.get('/', async (c) => {
+    if (c.req.query('refresh') === '1') runManager.invalidateAgentCache();
     const agents = await runManager.detectAgentsAsync();
     return c.json({ agents });
   });
@@ -74,6 +77,12 @@ export function agentsRoutes(runManager: RunManager): Hono {
 
       let turnCompleted = false;
       let turnError: string | null = null;
+      // Last system/api_retry diagnostic (Claude Code retries failed API calls
+      // with exponential backoff for minutes). Included in the timeout error
+      // so "Test timed out" alone doesn't hide an ongoing 429/5xx retry storm.
+      // 401/403 never reach here — the stream handler fails fast on those.
+      // Holder object: TS CFA narrows closure-assigned `let`s to null/never.
+      const retryState: { last: ApiRetryInfo | null } = { last: null };
 
       const unsubscribe = runManager.onEvent(runId, (event) => {
         if (acpPromptTest) {
@@ -95,6 +104,8 @@ export function agentsRoutes(runManager: RunManager): Hono {
         } else if (event.type === 'error') {
           turnError = event.message;
           turnCompleted = true;
+        } else if (event.type === 'status' && event.label === 'retrying' && event.retry) {
+          retryState.last = event.retry;
         }
       });
 
@@ -134,7 +145,16 @@ export function agentsRoutes(runManager: RunManager): Hono {
       unsubscribe?.();
       runManager.cancelRun(runId, 'agent-test:timeout');
       const elapsed = Date.now() - startedAt;
-      return c.json({ ok: false, elapsed, error: `Test timed out after ${Math.round(timeoutMs / 1000)}s` }, 408);
+      // If the agent was stuck retrying API errors (429/5xx/network), say so —
+      // a bare "timed out" hides the real cause (observed: Claude Code retries
+      // with exponential backoff for minutes on a dead/expired provider).
+      const lastRetry = retryState.last;
+      const retryHint = lastRetry
+        ? ` (agent was retrying API errors — attempt ${lastRetry.attempt ?? '?'}/${lastRetry.maxRetries ?? '?'}`
+          + `${lastRetry.errorStatus ? `, HTTP ${lastRetry.errorStatus}` : ''}`
+          + `${lastRetry.error ? ` ${lastRetry.error}` : ''})`
+        : '';
+      return c.json({ ok: false, elapsed, error: `Test timed out after ${Math.round(timeoutMs / 1000)}s${retryHint}` }, 408);
     } catch (err) {
       const elapsed = Date.now() - startedAt;
       return c.json({

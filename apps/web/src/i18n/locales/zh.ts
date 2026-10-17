@@ -63,6 +63,7 @@ const zh: Record<string, string> = {
 
   // ── HomePage ──
   'home.newChat': '新对话',
+  'home.minimize': '最小化为悬浮面板',
   'home.noAgent': '未选择代理 — 请在运行时页面设置默认代理',
   'home.tagline': '墨藏于库，流于万象',
   'home.onboarding.title': '先建一个知识库',
@@ -165,7 +166,9 @@ const zh: Record<string, string> = {
   // ── 会话产出面板（主页 dock）──
   'output.title': '会话产出',
   'output.stats': '写入 {writes} · {turns} 轮',
-  'output.writesLabel': '写入',
+  'output.sectionCreates': '新建 {count}',
+  'output.sectionUpdates': '更新 {count}',
+  'output.othersLabel': '其他写入 {count} 项（索引·日志·脚本等）',
   'output.locate': '在对话中定位这一步',
   'output.reveal': '在资源管理器中显示',
   'output.empty': '该会话没有写入产出的记录',
@@ -179,9 +182,6 @@ const zh: Record<string, string> = {
   'output.tabOverview': '概览',
   'output.tabChanges': '变更',
   'output.changesEmpty': '没有可展示的变更',
-  'output.statCreates': '新建',
-  'output.statUpdates': '更新',
-  'output.statAppends': '追加',
   'output.changeKind.create': '新建文件',
   'output.changeKind.update': '编辑',
   'output.changeKind.append': '追加',
@@ -687,6 +687,17 @@ const zh: Record<string, string> = {
   'kb.frontmatter.collapse': '收起属性',
   'kb.frontmatter.properties': '文档属性',
   'kb.floatingChat': '打开 AI 对话',
+  // 隐藏态（吸进边缘只剩 12px 小签）：此时点击**不打开面板**，只把按钮唤回可见位，
+  // 文案必须说这件事，否则是明确的预期错位。
+  'kb.floatingChatRecall': '点击唤回对话按钮',
+  // 首次藏边的一次性教学（只弹一次；见 FloatingChatButton 的 HINT_SEEN_KEY）
+  'kb.chatBtnHideHint': '对话按钮已收起，点边缘小签或右键即可唤回',
+  // 悬浮按钮右键菜单（固定动作：与 KB 页固定按钮同源）
+  'kb.chatMenu.build': '构建Wiki',
+  'kb.chatMenu.openSession': '打开会话',
+  'kb.chatMenu.hide': '隐藏按钮',
+  'kb.chatMenu.show': '唤回按钮',
+  'kb.chatMenu.resetPos': '恢复默认位置',
 
   // ── FilePicker ──
   'filePicker.justNow': '刚刚',

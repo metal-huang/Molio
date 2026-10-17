@@ -3,6 +3,7 @@ import { ChatComposer, buildAttachmentPrefix } from './ChatComposer';
 import type { PastedImage, FileRef } from './ChatComposer';
 import { UserMessage } from './UserMessage';
 import { AssistantMessage } from './AssistantMessage';
+import { SessionWriteKindsProvider } from './SessionWriteKinds';
 import { findLastAssistant } from '../utils/workSteps';
 import { useSelectMode, messageSelectionStore } from '../stores/messageSelectionStore';
 import { SelectionConfirmBar } from './SelectionConfirmBar';
@@ -169,7 +170,23 @@ export function ChatSessionView({
     />
   );
 
+  /**
+   * 底部容器的类名。输入框位置站的是**空状态卡片**（`composerArea`：无可用运行时 /
+   * 取不到运行时）而非输入框时，加 `--card` 修饰让它让出「输入栏」的装饰 —— 那道全宽
+   * 分隔缝与白底是给输入框的，卡片自带边框阴影，白底会让它看起来贴在一块不同的表面上，
+   * 10px 留白也让 200+px 的卡片上下只剩 10px。
+   *
+   * **只在卡片真的在位时加**：这个容器同时也承载勾选态的确认条（下方 selectMode 分支），
+   * 而确认条依赖容器的这套装饰。
+   */
+  const barClass = composerArea && !selectMode
+    ? `${composerBarClassName ?? 'home-composer-bar'} home-composer-bar--card`
+    : composerBarClassName ?? 'home-composer-bar';
+
   return (
+    // 写入的「新建 / 更新」判据要会话级上下文（写之前该路径出现过没有），
+    // 逐消息的产物横幅自己判不出来 —— 这里算一次，供其与产出面板共用。
+    <SessionWriteKindsProvider messages={messages}>
     <>
       {/* Chat log */}
       <div className={logClassName ?? 'home-chat-log'} ref={logRef}>
@@ -226,7 +243,7 @@ export function ChatSessionView({
 
       {/* Composer at the bottom — hidden in selection mode, replaced by the
           confirm bar (input and delete are mutually exclusive). */}
-      <div className={composerBarClassName ?? 'home-composer-bar'}>
+      <div className={barClass}>
         {selectMode ? (
           <SelectionConfirmBar
             onDelete={async () => {
@@ -244,5 +261,6 @@ export function ChatSessionView({
         )}
       </div>
     </>
+    </SessionWriteKindsProvider>
   );
 }
