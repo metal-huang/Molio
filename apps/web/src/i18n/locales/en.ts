@@ -736,6 +736,15 @@ const en: Record<string, string> = {
   'kb.chatMenu.show': 'Show button',
   'kb.chatMenu.resetPos': 'Reset position',
 
+  // ── Document image export ──
+  'kb.exportImage': 'Export image',
+  'kb.exporting': 'Exporting…',
+  'kb.exportProgress': 'Rendering {done}/{total}…',
+  'kb.exportDone': 'Image exported',
+  'kb.exportPages': 'Exported {pages} images',
+  'kb.exportFailed': 'Export failed, please try again',
+  'kb.exportUnsupported': 'Nothing to export',
+
   // ── FilePicker ──
   'filePicker.justNow': 'Just now',
   'filePicker.mAgo': '{n} min ago',
