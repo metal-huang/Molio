@@ -134,6 +134,9 @@ const zh: Record<string, string> = {
   'quiz.saved': '已存为 {path}',
   'quiz.saveFailed': '保存失败，请重试',
   'quiz.answeredProgress': '已作答 {done}/{total}',
+  'sandbox.generating': '正在生成演示…',
+  'sandbox.incomplete': '演示没有生成完整，可以重新生成一次',
+  'sandbox.invalidVerdict': '部分判定格式有误，已忽略：',
 
   // ── AssistantMessage ──
   'assistant.label': 'Molio',

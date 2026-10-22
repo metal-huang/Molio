@@ -5,6 +5,7 @@ import { groupTools, isInteractive } from '../utils/toolGroups';
 import { splitMessageParts } from '../utils/messageText';
 import { CodeBlock } from './CodeBlock';
 import { QuizCard } from './QuizCard';
+import { SandboxCard } from './SandboxCard';
 import { useWikiLinkClick } from '../hooks/useWikiLinkClick';
 import { useI18n } from '../i18n';
 import { ToolCard } from './ToolCard';
@@ -54,16 +55,26 @@ export function AssistantMessage({ message, isLast, onAnswerToolUse, onSubmitFor
   const displayProcessSegs = hasAskUserQuestion ? undefined : processSegs;
 
   const segments = useMemo(() => splitContent(displayAnswer), [displayAnswer]);
-  // quiz 围栏可能出现在最后一个工具之前（模型出题后又读了一次文件）：
-  // splitMessageParts 会把这段归入过程叙事，WorkBlock 又把闭合围栏剥掉 —— 不在
-  // 这里捞出来，题卡就从活动会话里消失，直到整页刷新才回来。运行中不捞（此围栏
-  // 还在流式增长，WorkBlock 显示占位），结束后一次性提升为消息级 QuizCard。
+  // quiz / rule-sandbox 围栏可能出现在最后一个工具之前（模型出题/演示后又读了
+  // 一次文件）：splitMessageParts 会把这段归入过程叙事，WorkBlock 又把闭合围栏
+  // 剥掉 —— 不在这里捞出来，卡片就从活动会话里消失，直到整页刷新才回来。
+  // 运行中不捞（此围栏还在流式增长，WorkBlock 显示占位），结束后一次性提升为
+  // 消息级卡片。
   const processQuizSegments = useMemo(
     () => (message.streaming
       ? []
       : splitContent(displayProcess).filter(
         (seg): seg is Extract<ReturnType<typeof splitContent>[number], { type: 'quiz' }> =>
           seg.type === 'quiz' && seg.complete,
+      )),
+    [message.streaming, displayProcess],
+  );
+  const processSandboxSegments = useMemo(
+    () => (message.streaming
+      ? []
+      : splitContent(displayProcess).filter(
+        (seg): seg is Extract<ReturnType<typeof splitContent>[number], { type: 'sandbox' }> =>
+          seg.type === 'sandbox' && seg.complete,
       )),
     [message.streaming, displayProcess],
   );
@@ -114,6 +125,15 @@ export function AssistantMessage({ message, isLast, onAnswerToolUse, onSubmitFor
         />
       ))}
 
+      {processSandboxSegments.map((seg, i) => (
+        <SandboxCard
+          key={`process-sandbox-${i}`}
+          raw={seg.raw}
+          complete
+          streaming={false}
+        />
+      ))}
+
       {selectMode && !message.streaming && (
         <MessageCheckbox id={message.id} />
       )}
@@ -135,8 +155,8 @@ export function AssistantMessage({ message, isLast, onAnswerToolUse, onSubmitFor
               if (seg.type === 'text') {
                 return <div key={i} dangerouslySetInnerHTML={{ __html: renderMarkdown(seg.content) }} />;
               }
-              const code = seg.type === 'quiz' ? seg.raw : seg.code;
-              const lang = seg.type === 'quiz' ? 'quiz' : seg.lang;
+              const code = seg.type === 'code' ? seg.code : seg.raw;
+              const lang = seg.type === 'code' ? seg.lang : seg.type === 'quiz' ? 'quiz' : 'rule-sandbox';
               return <CodeBlock key={i} lang={lang} code={code} streaming={false} />;
             })}
           </div>
@@ -178,6 +198,16 @@ export function AssistantMessage({ message, isLast, onAnswerToolUse, onSubmitFor
                   complete={seg.complete}
                   streaming={message.streaming}
                   conversationId={conversationId}
+                />
+              );
+            }
+            if (seg.type === 'sandbox') {
+              return (
+                <SandboxCard
+                  key={i}
+                  raw={seg.raw}
+                  complete={seg.complete}
+                  streaming={message.streaming}
                 />
               );
             }

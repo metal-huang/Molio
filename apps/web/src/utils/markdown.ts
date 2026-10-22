@@ -19,7 +19,7 @@ export function renderMarkdown(text: string): string {
 
   // Fenced code blocks (MUST run before strikethrough to prevent ~~ inside
   // code blocks from being rendered as <del>)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
+  html = html.replace(/```([\w][\w-]*)?\n([\s\S]*?)```/g, (_m, _lang, code) => {
     return `<pre><code>${code.trim()}</code></pre>`;
   });
 
@@ -170,21 +170,26 @@ function escapeAttr(text: string): string {
 export type Segment =
   | { type: 'text'; content: string }
   | { type: 'code'; lang: string; code: string }
-  | { type: 'quiz'; raw: string; complete: boolean };
+  | { type: 'quiz'; raw: string; complete: boolean }
+  | { type: 'sandbox'; raw: string; complete: boolean };
 
 /**
- * Split message content into text, fenced-code and quiz segments. Text segments
- * are rendered with renderMarkdown (preserving wiki-link/list/etc. logic); code
- * segments are rendered as <CodeBlock>; quiz segments are rendered as
- * <QuizCard> (the first entry in the interactive-block registry).
+ * Split message content into text, fenced-code and interactive-block segments.
+ * Text segments are rendered with renderMarkdown (preserving wiki-link/list/etc.
+ * logic); code segments are rendered as <CodeBlock>; quiz and rule-sandbox
+ * segments are rendered by their own components (interactive-block registry).
  *
  * Handles unclosed fences (streaming mid-block) by marking the tail segment
- * incomplete. Quiz consumers show a "generating" placeholder instead of parsing.
+ * incomplete. Interactive-block consumers show a "generating" placeholder
+ * instead of parsing.
  */
 export function splitContent(content: string): Segment[] {
   if (!content) return [];
   const segments: Segment[] = [];
-  const fence = /```(\w*)\n?/g;
+  // 语言名允许连字符（`rule-sandbox`、`objective-c`）—— \w* 会把 `rule-sandbox`
+  // 截成 `rule`，那样交互块永远识别不出来。但必须以 \w 开头：否则「```- 内容」
+  // 这种首行以 - 开头的裸围栏会把 `-` 吃成语言名，丢掉首字符。
+  const fence = /```([\w][\w-]*)?\n?/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
@@ -200,6 +205,8 @@ export function splitContent(content: string): Segment[] {
       }
       if (lang === 'quiz') {
         segments.push({ type: 'quiz', raw: content.slice(codeStart), complete: false });
+      } else if (lang === 'rule-sandbox') {
+        segments.push({ type: 'sandbox', raw: content.slice(codeStart), complete: false });
       } else {
         segments.push({ type: 'code', lang, code: content.slice(codeStart) });
       }
@@ -210,6 +217,8 @@ export function splitContent(content: string): Segment[] {
     }
     if (lang === 'quiz') {
       segments.push({ type: 'quiz', raw: content.slice(codeStart, closeIdx), complete: true });
+    } else if (lang === 'rule-sandbox') {
+      segments.push({ type: 'sandbox', raw: content.slice(codeStart, closeIdx), complete: true });
     } else {
       segments.push({ type: 'code', lang, code: content.slice(codeStart, closeIdx) });
     }

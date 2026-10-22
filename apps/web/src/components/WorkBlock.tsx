@@ -7,7 +7,7 @@ import type { ChatMessage } from '../hooks/useChatCore';
 import { deriveStepsForMessage } from '../utils/workSteps';
 import { isWorkBlockFailed } from '../utils/workOutcome';
 import { bucketSegmentsByDone, type MessageSegment } from '../utils/messageText';
-import { stripQuizForStreaming } from '../utils/quiz';
+import { stripInteractiveFences } from '../utils/ruleSandbox';
 import { UNGROUPABLE, type ToolItem } from '../utils/toolGroups';
 import { useI18n } from '../i18n';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -150,17 +150,26 @@ export function WorkBlock({ message, toolItems, processText, processSegments, is
   }, [processSegments, doneItems, fullIndexById]);
 
   // 过程叙事块：live = 正在打字（仅流式视图最后一块；其余静态，避免多光标闪烁）。
-  // 过程叙事里剥掉 quiz 围栏：闭合块不在这里渲染（结束后进正文 QuizCard）；
-  // 未闭合块显示「正在出题…」，避免把原始 JSON 一行行糊出来。
+  // 过程叙事里剥掉 quiz / rule-sandbox 围栏：闭合块不在这里渲染（结束后进正文
+  // 对应卡片）；未闭合块显示「正在出题… / 正在生成演示…」，避免把原始 JSON
+  // 一行行糊出来。
   const renderProcessBlock = (text: string, live: boolean, key: string) => {
-    const { text: visible, generating } = stripQuizForStreaming(text);
-    if (!visible && !generating) return null;
+    // 一次扫描剥两种交互围栏（quiz / rule-sandbox）：串联两个单类型剥离器会让
+    // 第一道把另一种围栏 JSON 里的本类型字面量误认成开栏、吃掉对方收尾。
+    const stripped = stripInteractiveFences(text);
+    const generating = stripped.quizGenerating || stripped.sandboxGenerating;
+    if (!stripped.text && !generating) return null;
     return (
       <div className="work-block-process" data-testid="work-block-process" data-typing={live} key={key}>
-        {visible && <TypingText text={visible} active={live && !generating} />}
-        {generating && (
+        {stripped.text && <TypingText text={stripped.text} active={live && !generating} />}
+        {stripped.quizGenerating && (
           <div className="quiz-generating" data-testid="quiz-generating">
             {t('quiz.generating')}
+          </div>
+        )}
+        {stripped.sandboxGenerating && (
+          <div className="sandbox-generating" data-testid="sandbox-generating">
+            {t('sandbox.generating')}
           </div>
         )}
       </div>
