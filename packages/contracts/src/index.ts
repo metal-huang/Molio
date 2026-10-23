@@ -93,6 +93,7 @@ export type {
   VaultListResponse,
   FileTreeResponse,
   KbHistoryListResponse,
+  SampleVaultResponse,
   // Wiki
   WikiOperationType,
   WikiStatusResponse,
@@ -111,6 +112,9 @@ export type {
   // Search
   SearchResult,
   SearchResponse,
+  // Quiz attempts
+  QuizAttemptInput,
+  SaveQuizAttemptsRequest,
 } from './knowledge.js';
 
 export type {

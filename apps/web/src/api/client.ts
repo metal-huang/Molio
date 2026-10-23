@@ -3,7 +3,7 @@ import type {
   RewindResendRequest,
   ChatMessage, Project, Conversation, ConversationHistoryItem,
   ConversationHistoryPage, ListHistoryQuery,
-  Vault, TreeNode, FileContent, KbHistoryEntry, CreateVaultRequest,
+  Vault, TreeNode, FileContent, KbHistoryEntry, CreateVaultRequest, SampleVaultResponse,
   WikiStatusResponse,
   GraphData, GraphScope, SearchResult, SearchResponse,
   AuthStatus, SendCodeResponse, User, MeResponse,
@@ -12,6 +12,7 @@ import type {
   HubSkillsQuery, HubSkillsListResponse, HubCategoriesResponse,
   InstallHubSkillRequest, InstallHubSkillResponse,
   HubSkillDetailQuery, HubSkillDetailResponse,
+  SaveQuizAttemptsRequest,
 } from '@molio/contracts';
 
 /**
@@ -604,6 +605,19 @@ export const api = {
     return res.json();
   },
 
+  /**
+   * Provision the built-in sample vault (activation path for new installs).
+   * Idempotent: returns the existing vault with `created: false` on repeat.
+   */
+  async createSampleVault(): Promise<SampleVaultResponse> {
+    const res = await fetch(`${BASE}/knowledge/sample-vault`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => null);
+      throw new Error(err?.error?.message ?? `Failed to create sample vault: ${res.status}`);
+    }
+    return res.json();
+  },
+
   async deleteVault(id: string): Promise<void> {
     await fetch(`${BASE}/knowledge/vaults/${id}`, { method: 'DELETE' });
   },
@@ -670,6 +684,16 @@ export const api = {
       body: JSON.stringify({ content }),
     });
     if (!res.ok) throw new Error(`Failed to write file: ${res.status}`);
+  },
+
+  /** Persist a submitted quiz's per-question attempts (batch). */
+  async saveQuizAttempts(payload: SaveQuizAttemptsRequest): Promise<void> {
+    const res = await fetch(`${BASE}/quiz/attempts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Failed to save quiz attempts: ${res.status}`);
   },
 
   /** Upload an image asset to the vault's .molio/assets/ directory. */

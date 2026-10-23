@@ -94,6 +94,18 @@ export interface KbHistoryListResponse {
   history: KbHistoryEntry[];
 }
 
+/**
+ * POST /api/knowledge/sample-vault response.
+ * Idempotent: when the sample vault already exists, `created` is false and the
+ * existing vault is returned without rewriting any files.
+ */
+export interface SampleVaultResponse {
+  vault: Vault;
+  /** Vault-relative path of the entry document, e.g. '开始使用.md'. */
+  entryFile: string;
+  created: boolean;
+}
+
 // ─── Wiki types ───
 
 export type WikiOperationType = 'build' | 'ingest' | 'lint' | 'query' | 'save';
@@ -185,4 +197,20 @@ export interface SearchResult {
 export interface SearchResponse {
   results: SearchResult[];
   truncated: boolean; // 是否因 limit 截断
+}
+
+/** 一次提交里单题的作答记录。 */
+export interface QuizAttemptInput {
+  questionId: string;
+  chosen: string[];
+  correct: boolean;
+}
+
+/** POST /api/quiz/attempts 的请求体。 */
+export interface SaveQuizAttemptsRequest {
+  vaultId?: string | null;
+  /** 题目内容指纹（SHA-256 hex，不含 title/引导语）。 */
+  quizFingerprint: string;
+  conversationId?: string | null;
+  attempts: QuizAttemptInput[];
 }
