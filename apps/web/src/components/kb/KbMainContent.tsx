@@ -18,11 +18,20 @@ import { TooLargeCard } from './TooLargeCard';
 import { ViewerErrorBoundary } from './ViewerErrorBoundary';
 import type { KbCodeMirrorViewerHandle } from './KbCodeMirrorViewer';
 import { KbFrontmatterCard } from './KbFrontmatterCard';
+import { exportDocument, ExportError } from './docExport';
+import {
+  countDocWords,
+  formatHeaderDate,
+  readingMinutes,
+  type ExportHeaderData,
+} from './docExport/header.ts';
+import type { ExportPreset } from './docExport/layout.ts';
 import { formatFileSize } from '../../utils/format';
 import { preprocessKbMarkdown } from '../../hooks/useKnowledge';
 import { useScrollMemory, type ScrollIntent } from '../../hooks/useScrollMemory';
 import { api } from '../../api/client';
 import { useI18n } from '../../i18n';
+import { useActiveVault } from '../../stores/vaultStore';
 import { useNavigationHistory, navigationHistoryStore } from '../../stores/navigationHistoryStore';
 import TurndownService from 'turndown';
 import { gfm } from 'turndown-plugin-gfm';
@@ -93,6 +102,28 @@ function formatReadTime(words: number, suffix: string): string {
   return `~${mins} ${suffix}`;
 }
 
+// ── 文档出图的版式选择（长图 / 3:4 竖卡）与头卡开关 ──
+// 存储读取只做全等比较 + try/catch：隐私模式、损坏字符串、localStorage 整个
+// 不可用时一律回退默认，绝不抛错把页面炸白。
+const DOC_EXPORT_PRESET_KEY = 'molio.docExport.preset';
+const DOC_EXPORT_HEADER_KEY = 'molio.docExport.header';
+
+function readStoredPreset(): ExportPreset {
+  try {
+    return localStorage.getItem(DOC_EXPORT_PRESET_KEY) === 'card34' ? 'card34' : 'long';
+  } catch {
+    return 'long';
+  }
+}
+
+function readStoredHeaderOn(): boolean {
+  try {
+    return localStorage.getItem(DOC_EXPORT_HEADER_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
 interface KbMainContentProps {
   fileContent: FileContent | null;
   selectedFile: string | null;
@@ -116,6 +147,10 @@ interface KbMainContentProps {
   onImport?: () => void;
   /** 打开知识库管理器（建库/打开已有库）。用于「一个库都没有」的空态。 */
   onOpenVaultManager?: () => void;
+  /** 创建内置示例知识库（仅零库空态）。 */
+  onCreateSampleVault?: () => void;
+  /** 示例库创建中（按钮 loading + 禁用）。 */
+  creatingSampleVault?: boolean;
   /** vault 里有没有文件。false 时空库主 CTA 换成「导入文件」——
    *  空库推「构建 Wiki」是错的：没有素材，AI 无从扫起。 */
   hasFiles?: boolean;
@@ -130,6 +165,9 @@ interface KbMainContentProps {
   onOpenOutline?: () => void;
   /** Open the unified KB chat panel in QA mode for the current file. */
   onAskAboutFile?: () => void;
+  /** First-run guide is on the ask step and a runtime is available: pulse the
+   *  real document-level ask button (not the checklist's proxy button). */
+  guideAsk?: boolean;
   /** 编辑后的内容（用于阅读模式显示未保存的更改） */
   editedContent?: string | null;
   /** Force-load a too-large file past the safe cap (wired to useKnowledge.forceLoadFile). */
@@ -169,6 +207,8 @@ export function KbMainContent({
   onBuildWiki,
   onImport,
   onOpenVaultManager,
+  onCreateSampleVault,
+  creatingSampleVault,
   hasFiles,
   showFileName = true,
   isEditMode = false,
@@ -176,6 +216,7 @@ export function KbMainContent({
   onAskAboutSelection,
   onOpenOutline,
   onAskAboutFile,
+  guideAsk = false,
   editedContent,
   onForceLoad,
   onCloseTab,
@@ -184,7 +225,7 @@ export function KbMainContent({
   onCloseCompanion,
   scrollIntentRef,
 }: KbMainContentProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { canGoBack, canGoForward } = useNavigationHistory();
   const contentRef = useRef<HTMLDivElement>(null);
   const cmRef = useRef<KbCodeMirrorViewerHandle>(null);
@@ -205,6 +246,13 @@ export function KbMainContent({
   const [ctxMenu, setCtxMenu] = useState<
     { x: number; y: number; source: 'doocs' | 'codemirror' | 'pdf'; selectedText?: string } | null
   >(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // 版式与头卡开关：显式选择立即持久化（localStorage），未配置过时用默认值。
+  const [exportPreset, setExportPreset] = useState<ExportPreset>(readStoredPreset);
+  const [exportHeaderOn, setExportHeaderOn] = useState(readStoredHeaderOn);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const activeVault = useActiveVault();
 
   // Routing flags — computed from extension + size + tooLarge.
   const fileName = selectedFile ? (selectedFile.split('/').pop() ?? selectedFile) : '';
@@ -410,6 +458,121 @@ export function KbMainContent({
   }, []);
 
   const closeContextMenu = useCallback(() => setCtxMenu(null), []);
+
+  // 头卡数据：标题 + 元信息行（库名 · 日期 · 字数 · 阅读时长）+ 标签。
+  // meta 串在这里拼——i18n 留在 React 层，docExport 层不碰本地化。
+  const buildExportHeader = useCallback(
+    (target: HTMLElement, title: string): ExportHeaderData => {
+      const words = countDocWords(target.innerText ?? '');
+      const rawTags = frontmatterData.tags;
+      const tags = Array.isArray(rawTags)
+        ? rawTags.map((tag) => String(tag)).filter(Boolean)
+        : typeof rawTags === 'string'
+          ? rawTags.split(/,\s*/).filter(Boolean)
+          : [];
+      const meta = [
+        activeVault?.name,
+        formatHeaderDate(new Date(), locale),
+        words > 0 ? t('kb.exportWords', { words }) : '',
+        t('kb.exportMinutes', { minutes: readingMinutes(words) }),
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      return { title, meta, tags };
+    },
+    [activeVault?.name, frontmatterData.tags, locale, t],
+  );
+
+  const handleExportImage = useCallback(async () => {
+    // 文档出图：把当前渲染出来的 #output 导出成 1080px 宽的长图。
+    // 排版模式的目标在 MdTypesetEditor 的预览里（两条路径互斥，同屏只有一个 #output）。
+    const target = (
+      isTypesetMode
+        ? document.querySelector('.kb-typeset-preview-body #output')
+        : contentRef.current?.querySelector('#output')
+    ) as HTMLElement | null;
+
+    if (!target) {
+      setExportNotice(t('kb.exportUnsupported'));
+      window.setTimeout(() => setExportNotice(null), 4_000);
+      return;
+    }
+
+    setExporting(true);
+    setExportMenuOpen(false);
+    setExportNotice(t('kb.exporting'));
+    try {
+      // 文件名优先用渲染后的 H1（读者认得的标题），没有 H1 才退回文件 stem。
+      const h1 = target.querySelector('h1')?.textContent?.trim();
+      const stem = fileName.replace(/\.[^.]+$/, '');
+      const title = h1 || stem;
+      // 头卡：图上第一次出现「截图拿不到」的信息——库名、日期、字数/阅读时长、标签。
+      // meta 串在这里拼（i18n 留 React 层，docExport 层不碰本地化）。
+      const header = exportHeaderOn ? buildExportHeader(target, title) : undefined;
+      const result = await exportDocument(target, {
+        title,
+        preset: exportPreset,
+        header,
+        onProgress: (done, total) =>
+          setExportNotice(t('kb.exportProgress', { done, total })),
+      });
+      setExportNotice(
+        result.pages > 1 ? t('kb.exportPages', { pages: result.pages }) : t('kb.exportDone'),
+      );
+    } catch (error) {
+      console.warn('Document export failed:', error);
+      // 「文档没有内容可导」和「导出过程失败」是两件事，给用户的下一步不同。
+      setExportNotice(
+        error instanceof ExportError && error.code === 'no-output'
+          ? t('kb.exportUnsupported')
+          : t('kb.exportFailed'),
+      );
+    } finally {
+      setExporting(false);
+      window.setTimeout(() => setExportNotice(null), 4_000);
+    }
+  }, [contentRef, fileName, isTypesetMode, t, exportHeaderOn, exportPreset, buildExportHeader]);
+
+  const chooseExportPreset = useCallback((preset: ExportPreset) => {
+    setExportPreset(preset);
+    try {
+      localStorage.setItem(DOC_EXPORT_PRESET_KEY, preset);
+    } catch {
+      // 隐私模式 / 存储不可用：本次会话内仍然生效，只是下次不记得。
+    }
+    // 不收气泡：选完版式人还要点「导出图片」（对齐图谱出图）。
+  }, []);
+
+  const toggleExportHeader = useCallback(() => {
+    setExportHeaderOn((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(DOC_EXPORT_HEADER_KEY, next ? 'on' : 'off');
+      } catch {
+        // 同上。
+      }
+      return next;
+    });
+  }, []);
+
+  // 版式菜单开着时：点外面 / Esc 收起（对齐 kb-tab-dropdown 的既有行为）。
+  const exportMenuWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (exportMenuWrapRef.current?.contains(e.target as Node)) return;
+      setExportMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExportMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [exportMenuOpen]);
 
   const selectionText = useCallback(() => {
     const sel = window.getSelection();
@@ -652,6 +815,75 @@ export function KbMainContent({
                     </svg>
                   </button>
                 </>
+              )}
+
+              {/* 导出图片 —— 阅读与排版模式都可用；排版模式导出的就是右侧预览。
+                  一个按钮开气泡（对齐图谱出图）：版式二选一是分段控件并排可比，
+                  头卡开关一行，底部是导出动作。 */}
+              {(isReadingPath || isTypesetMode) && (
+                <div className="kb-export-ctrl" ref={exportMenuWrapRef}>
+                  {exportMenuOpen && (
+                    <div className="kb-export-menu">
+                      <div
+                        className="kb-export-aspects"
+                        role="group"
+                        aria-label={t('kb.exportPreset')}
+                      >
+                        <button
+                          type="button"
+                          className={`kb-export-aspect${exportPreset === 'long' ? ' is-active' : ''}`}
+                          data-testid="kb-export-preset-long"
+                          aria-pressed={exportPreset === 'long'}
+                          onClick={() => chooseExportPreset('long')}
+                        >
+                          {t('kb.exportPresetLong')}
+                        </button>
+                        <button
+                          type="button"
+                          className={`kb-export-aspect${exportPreset === 'card34' ? ' is-active' : ''}`}
+                          data-testid="kb-export-preset-card34"
+                          aria-pressed={exportPreset === 'card34'}
+                          onClick={() => chooseExportPreset('card34')}
+                        >
+                          {t('kb.exportPresetCard34')}
+                        </button>
+                      </div>
+                      <label className="kb-export-toggle" data-testid="kb-export-header-toggle">
+                        <input
+                          type="checkbox"
+                          checked={exportHeaderOn}
+                          onChange={toggleExportHeader}
+                        />
+                        <span>{t('kb.exportHeader')}</span>
+                      </label>
+                      <button
+                        type="button"
+                        className="kb-export-item"
+                        data-testid="kb-export-download"
+                        onClick={handleExportImage}
+                        disabled={exporting}
+                      >
+                        {t('kb.exportImage')}
+                      </button>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className={`kb-btn kb-btn-ghost${exportMenuOpen ? ' is-active' : ''}`}
+                    onClick={() => setExportMenuOpen((open) => !open)}
+                    disabled={exporting}
+                    title={t('kb.exportImage')}
+                    aria-label={t('kb.exportImage')}
+                    aria-expanded={exportMenuOpen}
+                    data-testid="kb-btn-export-image"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  </button>
+                </div>
               )}
 
               {/* Typeset toggle — signature action. Read mode: T icon + "排版"
@@ -942,7 +1174,7 @@ export function KbMainContent({
           {onAskAboutFile && selectedFile && (
             <button
               type="button"
-              className="kb-btn kb-btn-ghost"
+              className={`kb-btn kb-btn-ghost${guideAsk ? ' kb-guide-pulse' : ''}`}
               onClick={onAskAboutFile}
               title={t('kb.askButton')}
               data-testid="kb-btn-ask"
@@ -976,22 +1208,41 @@ export function KbMainContent({
       {/* ── Body: empty states / error / content ── */}
       {!selectedFile ? (
         !vaultId ? (
-          <div className="kb-empty-state">
+          <div className="kb-empty-state kb-empty-state--welcome">
             <div className="kb-empty-icon">📚</div>
             <h3>{t('kb.welcomeTitle')}</h3>
             <p>{t('kb.welcomeBody')}</p>
-            <p className="kb-empty-hint">{t('kb.welcomeHint')}</p>
-            {/* 原来这段只有说明没按钮——从导航点进来的人到此为止，无路可走 */}
-            {onOpenVaultManager && (
-              <button
-                type="button"
-                className="wiki-cta-btn"
-                data-testid="kb-empty-create-vault-cta"
-                onClick={onOpenVaultManager}
-              >
-                {t('kb.createVaultCta')}
-              </button>
-            )}
+
+            <div className="kb-empty-actions kb-empty-actions--cards">
+              <div className="kb-empty-card">
+                <div className="kb-empty-card__title">{t('kb.sampleVaultTitle')}</div>
+                <p className="kb-empty-card__body">{t('kb.sampleVaultBody')}</p>
+                <button
+                  type="button"
+                  className="wiki-cta-btn"
+                  data-testid="kb-empty-sample-vault-cta"
+                  disabled={creatingSampleVault || !onCreateSampleVault}
+                  onClick={onCreateSampleVault}
+                >
+                  {creatingSampleVault ? t('kb.sampleVaultCreating') : t('kb.sampleVaultCta')}
+                </button>
+              </div>
+
+              <div className="kb-empty-card">
+                <div className="kb-empty-card__title">{t('kb.ownVaultTitle')}</div>
+                <p className="kb-empty-card__body">{t('kb.ownVaultBody')}</p>
+                {onOpenVaultManager && (
+                  <button
+                    type="button"
+                    className="wiki-cta-btn wiki-cta-btn--ghost"
+                    data-testid="kb-empty-create-vault-cta"
+                    onClick={onOpenVaultManager}
+                  >
+                    {t('kb.createVaultCta')}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         ) : !wikiInitialized ? (
           /* 未建 Wiki 的两个状态合成一处：同一套结构、同一组按钮，只对调主次。
@@ -1325,6 +1576,12 @@ export function KbMainContent({
               </>
             );
           })()}
+        </div>
+      )}
+
+      {exportNotice && (
+        <div className="kb-save-toast" data-testid="kb-export-notice" role="status">
+          {exportNotice}
         </div>
       )}
     </main>

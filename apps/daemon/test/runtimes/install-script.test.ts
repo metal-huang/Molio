@@ -619,7 +619,6 @@ describe('runScriptProcess — real tree kill (orphaned-installer regression)', 
       );
 
       const ac = new AbortController();
-      const t0 = Date.now();
       const promise = runScriptProcess({
         cmd: 'powershell',
         args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-NonInteractive', '-File', scriptPath],
@@ -630,14 +629,25 @@ describe('runScriptProcess — real tree kill (orphaned-installer regression)', 
       });
 
       // Wait for the 3rd-level process to exist, then abort mid-run.
+      //
+      // 等「能解析出正数 pid」而不是「文件存在」：PowerShell 的 Out-File 先创建
+      // 文件、后写入内容，繁忙的 runner 上 150ms 轮询会正好落进空窗——读到空
+      // 串 → parseInt = NaN（2026-10-21 windows runner 实测，同代码前一轮绿）。
+      let deepPid = Number.NaN;
       const deadline = Date.now() + 30_000;
-      while (!existsSync(deepPidFile) && Date.now() < deadline) {
+      while (Date.now() < deadline) {
+        const raw = existsSync(deepPidFile) ? readFileSync(deepPidFile, 'utf8').trim() : '';
+        deepPid = parseInt(raw, 10);
+        if (Number.isFinite(deepPid) && deepPid > 0) break;
         await new Promise((r) => setTimeout(r, 150));
       }
-      assert.equal(existsSync(deepPidFile), true, 'deep grandchild must have started before abort');
-      const deepPid = parseInt(readFileSync(deepPidFile, 'utf8').trim(), 10);
       assert.ok(Number.isFinite(deepPid) && deepPid > 0, 'deep grandchild pid recorded');
 
+      // 只量「abort → 收场」：spawn 链（冷 powershell × 3 层）+ pid 轮询的耗时
+      // 属于启动阶段，算进 settle 上限只会让繁忙 runner 误报（2026-10-22 实测
+      // 21.7s：三层冷启动 + taskkill /T 收场 12-14s，全程计时撞破 20s 上限）。
+      // 上限仍判别真孤儿——sleep 300 的孤儿永远不会收场。
+      const t0 = Date.now();
       ac.abort();
       const result = await promise;
       const elapsed = Date.now() - t0;

@@ -30,6 +30,7 @@
         "apps/web/src/components/SourceChips.*",
         "apps/web/src/components/FileRef.*",
         "apps/web/src/utils/workSteps.*",
+        "apps/web/src/utils/sessionSources.*",
         "apps/web/src/utils/toolRefs.*",
         "apps/web/src/utils/diff.*",
         "apps/web/src/api/sse.ts",
@@ -44,7 +45,13 @@
         "apps/daemon/src/streams/*",
         "apps/web/src/components/RuntimeModelPill.*",
         "apps/web/src/components/runtimeModelOptions.*",
-        "apps/web/src/stores/chatRuntimeStore.*"
+        "apps/web/src/stores/chatRuntimeStore.*",
+        "apps/web/src/components/QuizCard.*",
+        "apps/web/src/utils/quiz.*",
+        "apps/web/src/utils/quizFile.*",
+        "apps/web/src/hooks/useWikiLinkClick.*",
+        "apps/web/src/components/SandboxCard.*",
+        "apps/web/src/utils/ruleSandbox.*"
       ],
       "specs": [
         "chat-single",
@@ -67,12 +74,18 @@
         "composer-hints",
         "chat-markdown",
         "session-output",
-        "session-output-history"
+        "session-output-history",
+        "quiz",
+        "sandbox",
+        "chat-autoscroll",
+        "chat-doc-ref-chip"
       ]
     },
     "kb": {
       "paths": [
         "apps/web/src/components/kb/*",
+        "apps/web/src/components/kb/docExport/*",
+        "apps/web/src/utils/exportFileName*",
         "apps/web/src/hooks/useKnowledge*",
         "apps/web/src/utils/kbImage*",
         "apps/web/src/hooks/useKbTabs*",
@@ -114,6 +127,7 @@
         "split-view",
         "kb-terminology",
         "kb-search",
+        "kb-export",
         "market-community"
       ]
     },
@@ -163,10 +177,21 @@
       "specs": [
         "bootstrap",
         "navigation",
-        "home-onboarding",
+        "onboarding",
         "default-landing",
         "auth",
         "market-community"
+      ]
+    },
+    "onboarding": {
+      "paths": [
+        "apps/web/src/stores/onboardingStore.ts",
+        "apps/web/src/components/kb/OnboardingChecklist*",
+        "apps/web/src/components/kb/KbMainContent*",
+        "apps/web/src/api/client.ts"
+      ],
+      "specs": [
+        "onboarding"
       ]
     },
     "settings": {
@@ -294,6 +319,10 @@
       "priority": "P0",
       "file": "chat-single.spec.ts"
     },
+    "quiz": {
+      "priority": "P0",
+      "file": "quiz.spec.ts"
+    },
     "chat-multi": {
       "priority": "P0",
       "file": "chat-multi.spec.ts"
@@ -301,6 +330,14 @@
     "chat-streaming": {
       "priority": "P1",
       "file": "chat-streaming.spec.ts"
+    },
+    "chat-autoscroll": {
+      "priority": "P1",
+      "file": "chat-autoscroll.spec.ts"
+    },
+    "chat-doc-ref-chip": {
+      "priority": "P1",
+      "file": "chat-doc-ref-chip.spec.ts"
     },
     "chat-copy": {
       "priority": "P0",
@@ -390,6 +427,10 @@
       "priority": "P1",
       "file": "kb-search.spec.ts"
     },
+    "kb-export": {
+      "priority": "P1",
+      "file": "kb-export.spec.ts"
+    },
     "kb-chat-entry": {
       "priority": "P1",
       "file": "kb-chat-entry.spec.ts"
@@ -430,9 +471,9 @@
       "priority": "P0",
       "file": "kb-large-file.spec.ts"
     },
-    "home-onboarding": {
-      "priority": "P1",
-      "file": "home-onboarding.spec.ts"
+    "onboarding": {
+      "priority": "P0",
+      "file": "onboarding.spec.ts"
     },
     "kb-large-file-gbk": {
       "priority": "P0",
@@ -565,6 +606,10 @@
     "kb-vault-list-menu": {
       "priority": "P1",
       "file": "kb-vault-list-menu.spec.ts"
+    },
+    "sandbox": {
+      "priority": "P0",
+      "file": "sandbox.spec.ts"
     }
   }
 }
